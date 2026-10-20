@@ -2,9 +2,9 @@
 """全文下载、段落解析与官方解读检索。
 
 引擎里这两件事写在 tax_server 的 Flask 路由层内，适配器要用就得连带把
-Flask 拉进来。本副本只 import 引擎的取数脚本（tax_detail／tax_so360／
-tax_shui5／tax_wechat），不 import tax_server，所以 CLI、API、MCP 都拿得
-到全文与官方解读，又都不依赖 Flask。
+Flask 拉进来。本副本只 import 随包携带的运行时取数脚本（tax_detail／
+tax_so360／tax_shui5／tax_wechat），不 import tax_server，所以 CLI、API、
+MCP 都拿得到全文与官方解读，又都不依赖 Flask。
 
 本文件是逐项目副本：CLI、API、MCP 各自带一份，三份内容要求逐字节相同，
 由各自的测试用 SHA-256 校验。缓存是本进程内的字典，三个进程各存各的。

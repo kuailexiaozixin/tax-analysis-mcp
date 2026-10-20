@@ -1,0 +1,558 @@
+{
+ "_built_at": "2026-10-18 13:38:11",
+ "_source": "https://www.shui5.cn/",
+ "columns": [
+  {
+   "dir": "AnHuiShengCaiShuiFaGui",
+   "nav": "",
+   "label": "安徽",
+   "classid": 160,
+   "columns": [
+    "安徽省法规"
+   ],
+   "pages": 87,
+   "records": 3020
+  },
+  {
+   "dir": "BeiJingShiCaiShuiFaGui",
+   "nav": "",
+   "label": "北京",
+   "classid": 152,
+   "columns": [
+    "北京市法规"
+   ],
+   "pages": 178,
+   "records": 6198
+  },
+  {
+   "dir": "Bulletin",
+   "nav": "资讯与投稿",
+   "label": "资讯与投稿",
+   "classid": 6,
+   "columns": [
+    "资讯与投稿"
+   ],
+   "pages": 287,
+   "records": 8889
+  },
+  {
+   "dir": "CaiShuiBiaoDan",
+   "nav": "财税表单",
+   "label": "财税表单",
+   "classid": 259,
+   "columns": [
+    "所得税申报表",
+    "流转税申报表"
+   ],
+   "pages": 10,
+   "records": 284
+  },
+  {
+   "dir": "DaiLianShiFaGui",
+   "nav": "",
+   "label": "大连",
+   "classid": 12667,
+   "columns": [
+    "大连市法规"
+   ],
+   "pages": 35,
+   "records": 1205
+  },
+  {
+   "dir": "DiFangCaiShuiFaGui",
+   "nav": "地方法规",
+   "label": "地方法规",
+   "classid": 145,
+   "columns": [
+    "上海市法规",
+    "北京市法规",
+    "天津市法规",
+    "宁夏法规",
+    "安徽省法规",
+    "山东省法规",
+    "山西省法规",
+    "广东省法规",
+    "广西法规",
+    "江苏省法规",
+    "江西省法规",
+    "河南省法规",
+    "浙江省法规",
+    "海南省法规",
+    "湖北省法规",
+    "湖南省法规",
+    "甘肃省法规",
+    "重庆市法规",
+    "陕西省法规",
+    "青海省法规"
+   ],
+   "pages": 2399,
+   "records": 76759
+  },
+  {
+   "dir": "FuJianShengCaiShuiFaGui",
+   "nav": "",
+   "label": "福建",
+   "classid": 184,
+   "columns": [
+    "福建省法规"
+   ],
+   "pages": 94,
+   "records": 3275
+  },
+  {
+   "dir": "GanSuShengCaiShuiFaGui",
+   "nav": "",
+   "label": "甘肃",
+   "classid": 179,
+   "columns": [
+    "甘肃省法规"
+   ],
+   "pages": 27,
+   "records": 911
+  },
+  {
+   "dir": "GuangDongShengCaiShuiFaGu",
+   "nav": "",
+   "label": "广东",
+   "classid": 159,
+   "columns": [
+    "广东省法规"
+   ],
+   "pages": 188,
+   "records": 6552
+  },
+  {
+   "dir": "GuangXiZiZhiQuCaiShuiFaGu",
+   "nav": "",
+   "label": "广西",
+   "classid": 173,
+   "columns": [
+    "广西法规"
+   ],
+   "pages": 68,
+   "records": 2373
+  },
+  {
+   "dir": "GuiZhouShengCaiShuiFaGui",
+   "nav": "",
+   "label": "贵州",
+   "classid": 177,
+   "columns": [
+    "贵州省法规"
+   ],
+   "pages": 28,
+   "records": 970
+  },
+  {
+   "dir": "HaiNanShengCaiShuiFaGui",
+   "nav": "",
+   "label": "海南",
+   "classid": 176,
+   "columns": [
+    "海南省法规"
+   ],
+   "pages": 51,
+   "records": 1760
+  },
+  {
+   "dir": "HeBeiShengCaiShuiFaGui",
+   "nav": "",
+   "label": "河北",
+   "classid": 158,
+   "columns": [
+    "河北省法规"
+   ],
+   "pages": 61,
+   "records": 2124
+  },
+  {
+   "dir": "HeNanShengCaiShuiFaGui",
+   "nav": "",
+   "label": "河南",
+   "classid": 168,
+   "columns": [
+    "河南省法规"
+   ],
+   "pages": 56,
+   "records": 1930
+  },
+  {
+   "dir": "HeiLongJiangCaiShuiFaGui",
+   "nav": "",
+   "label": "黑龙",
+   "classid": 172,
+   "columns": [
+    "黑龙江法规"
+   ],
+   "pages": 38,
+   "records": 1296
+  },
+  {
+   "dir": "HuBeiShengCaiShuiFaGui",
+   "nav": "",
+   "label": "湖北",
+   "classid": 162,
+   "columns": [
+    "湖北省法规"
+   ],
+   "pages": 71,
+   "records": 2483
+  },
+  {
+   "dir": "HuNanShengCaiShuiFaGui",
+   "nav": "",
+   "label": "湖南",
+   "classid": 171,
+   "columns": [
+    "湖南省法规"
+   ],
+   "pages": 58,
+   "records": 2019
+  },
+  {
+   "dir": "JiLinShengCaiShuiFaGui",
+   "nav": "",
+   "label": "吉林",
+   "classid": 161,
+   "columns": [
+    "吉林省法规"
+   ],
+   "pages": 43,
+   "records": 1471
+  },
+  {
+   "dir": "JiangSuShengCaiShuiFaGui",
+   "nav": "",
+   "label": "江苏",
+   "classid": 165,
+   "columns": [
+    "江苏省法规"
+   ],
+   "pages": 80,
+   "records": 2780
+  },
+  {
+   "dir": "JiangXiShengCaiShuiFaGui",
+   "nav": "",
+   "label": "江西",
+   "classid": 170,
+   "columns": [
+    "江西省法规"
+   ],
+   "pages": 51,
+   "records": 1755
+  },
+  {
+   "dir": "LiaoNingShengCaiShuiFaGui",
+   "nav": "",
+   "label": "辽宁",
+   "classid": 169,
+   "columns": [
+    "辽宁省法规"
+   ],
+   "pages": 74,
+   "records": 2565
+  },
+  {
+   "dir": "NaShuiPingGu",
+   "nav": "纳税评估",
+   "label": "纳税评估",
+   "classid": 30,
+   "columns": [
+    "税务稽查案例",
+    "财税风险控制"
+   ],
+   "pages": 160,
+   "records": 5584
+  },
+  {
+   "dir": "NaShuiTiaoZhen",
+   "nav": "税会差异",
+   "label": "税会差异",
+   "classid": 43,
+   "columns": [
+    "会计与税务差异",
+    "会计准则实务解读",
+    "税务会计"
+   ],
+   "pages": 7,
+   "records": 229
+  },
+  {
+   "dir": "NeiMengGuzizhiquQuCaiShuiFa",
+   "nav": "",
+   "label": "内蒙",
+   "classid": 180,
+   "columns": [
+    "内蒙古法规"
+   ],
+   "pages": 34,
+   "records": 1176
+  },
+  {
+   "dir": "NianDuCaiShuiFaGui",
+   "nav": "中央法规",
+   "label": "中央法规",
+   "classid": 108,
+   "columns": [
+    "2026年法规"
+   ],
+   "pages": 950,
+   "records": 28487
+  },
+  {
+   "dir": "NinBoShiFaGui",
+   "nav": "",
+   "label": "宁波",
+   "classid": 12670,
+   "columns": [
+    "宁波市法规"
+   ],
+   "pages": 27,
+   "records": 926
+  },
+  {
+   "dir": "NingXiaZiZhiQuCaiShuiFaGu",
+   "nav": "",
+   "label": "宁夏",
+   "classid": 178,
+   "columns": [
+    "宁夏法规"
+   ],
+   "pages": 21,
+   "records": 703
+  },
+  {
+   "dir": "QingDaoShiFaGui",
+   "nav": "",
+   "label": "青岛",
+   "classid": 12669,
+   "columns": [
+    "青岛市法规"
+   ],
+   "pages": 54,
+   "records": 1880
+  },
+  {
+   "dir": "QingHaiShengCaiShuiFaGui",
+   "nav": "",
+   "label": "青海",
+   "classid": 182,
+   "columns": [
+    "青海省法规"
+   ],
+   "pages": 20,
+   "records": 670
+  },
+  {
+   "dir": "ShanDongShengCaiShuiFaGui",
+   "nav": "",
+   "label": "山东",
+   "classid": 166,
+   "columns": [
+    "山东省法规"
+   ],
+   "pages": 93,
+   "records": 3238
+  },
+  {
+   "dir": "ShanXiShengCaiShuiFaGui",
+   "nav": "",
+   "label": "陕西",
+   "classid": 175,
+   "columns": [
+    "陕西省法规"
+   ],
+   "pages": 34,
+   "records": 1178
+  },
+  {
+   "dir": "ShangHaiShiCaiShuiFaGui",
+   "nav": "",
+   "label": "上海",
+   "classid": 153,
+   "columns": [
+    "上海市法规"
+   ],
+   "pages": 99,
+   "records": 3455
+  },
+  {
+   "dir": "ShenZhengShiFaGui",
+   "nav": "",
+   "label": "深圳",
+   "classid": 12673,
+   "columns": [
+    "深圳市法规"
+   ],
+   "pages": 84,
+   "records": 2909
+  },
+  {
+   "dir": "ShiWuJiDu",
+   "nav": "实务解读",
+   "label": "实务解读",
+   "classid": 12684,
+   "columns": [
+    "人社实务",
+    "民商实务",
+    "财税实务"
+   ],
+   "pages": 396,
+   "records": 12268
+  },
+  {
+   "dir": "ShuiShouYouHui",
+   "nav": "税收优惠",
+   "label": "税收优惠",
+   "classid": 194,
+   "columns": [
+    "下岗失业税收优惠",
+    "个人所得税优惠",
+    "其他税收优惠政策",
+    "增值税优惠政策",
+    "所得税优惠政策",
+    "行业税收优惠政策",
+    "高新技术税收优惠"
+   ],
+   "pages": 36,
+   "records": 1088
+  },
+  {
+   "dir": "ShuiWuChouHua",
+   "nav": "税务合规",
+   "label": "税务合规",
+   "classid": 11,
+   "columns": [
+    "个人所得税合规",
+    "企业所得税合规",
+    "增值税合规",
+    "建安房地产合规",
+    "综合税务合规"
+   ],
+   "pages": 27,
+   "records": 819
+  },
+  {
+   "dir": "ShuiWuJiChaAnLi",
+   "nav": "税务稽查",
+   "label": "税务稽查",
+   "classid": 74,
+   "columns": [
+    "税务稽查案例"
+   ],
+   "pages": 75,
+   "records": 2591
+  },
+  {
+   "dir": "ShuiWuWenDa",
+   "nav": "问答",
+   "label": "问答",
+   "classid": 37,
+   "columns": [
+    "税收问答"
+   ],
+   "pages": 323,
+   "records": 9992
+  },
+  {
+   "dir": "SiChuanShengCaiShuiFaGui",
+   "nav": "",
+   "label": "四川",
+   "classid": 167,
+   "columns": [
+    "四川省法规"
+   ],
+   "pages": 50,
+   "records": 1732
+  },
+  {
+   "dir": "TianJinShiCaiShuiFaGui",
+   "nav": "",
+   "label": "天津",
+   "classid": 155,
+   "columns": [
+    "天津市法规"
+   ],
+   "pages": 72,
+   "records": 2495
+  },
+  {
+   "dir": "XiCangZiZhiQuCaiShuiFaGui",
+   "nav": "",
+   "label": "西藏",
+   "classid": 163,
+   "columns": [
+    "西藏法规"
+   ],
+   "pages": 10,
+   "records": 331
+  },
+  {
+   "dir": "XiaMenShiFaGui",
+   "nav": "",
+   "label": "厦门",
+   "classid": 12672,
+   "columns": [
+    "厦门市法规"
+   ],
+   "pages": 52,
+   "records": 1788
+  },
+  {
+   "dir": "XinJiangZiZhiQuCaiShuiFaG",
+   "nav": "",
+   "label": "新疆",
+   "classid": 183,
+   "columns": [
+    "新疆法规"
+   ],
+   "pages": 24,
+   "records": 838
+  },
+  {
+   "dir": "YunNanShengCaiShuiFaGui",
+   "nav": "",
+   "label": "云南",
+   "classid": 174,
+   "columns": [
+    "云南省法规"
+   ],
+   "pages": 48,
+   "records": 1660
+  },
+  {
+   "dir": "ZheJiangShengCaiShuiFaGui",
+   "nav": "",
+   "label": "浙江",
+   "classid": 164,
+   "columns": [
+    "浙江省法规"
+   ],
+   "pages": 119,
+   "records": 4160
+  },
+  {
+   "dir": "ZhongQingShiCaiShuiFaGui",
+   "nav": "",
+   "label": "重庆",
+   "classid": 154,
+   "columns": [
+    "重庆市法规"
+   ],
+   "pages": 47,
+   "records": 1643
+  },
+  {
+   "dir": "category_181",
+   "nav": "",
+   "label": "山西",
+   "classid": 181,
+   "columns": [
+    "山西省法规"
+   ],
+   "pages": 32,
+   "records": 1107
+  }
+ ]
+}

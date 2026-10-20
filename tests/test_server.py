@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -9,7 +11,11 @@ from fastmcp import Client
 from fastmcp.exceptions import ToolError
 from mcp.shared.exceptions import MCPError
 
-from tax_engine_mcp import engine, server
+SRC = Path(__file__).resolve().parents[1] / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from tax_engine_mcp import engine, server  # noqa: E402
 
 TOOL_NAMES = {
     "engine_health",
@@ -250,7 +256,7 @@ def test_analyze_tool_returns_structured_draft(monkeypatch):
 
 
 def test_service_layer_lives_here_not_in_engine():
-    """服务契约层和文档读取层是本项目的副本。
+    """服务契约层、文档读取层与运行时快照都住在本项目里。
 
     引擎目录里出现这两个模块就说明适配器与引擎又缠回去了：适配器会跟着
     引擎的提交一起变，四个项目的独立性就没有了。
@@ -258,9 +264,45 @@ def test_service_layer_lives_here_not_in_engine():
     project_root = Path(__file__).resolve().parents[1]
     assert Path(server.tax_service.__file__).is_relative_to(project_root / "src")
     assert Path(server.tax_service.tax_doc.__file__).is_relative_to(project_root / "src")
+    assert engine.ENGINE_ROOT.is_relative_to(project_root / "src")
+    assert (engine.ENGINE_ROOT / "MANIFEST.json").is_file()
     assert not (engine.ENGINE_ROOT / "scripts" / "tax_service.py").exists()
     assert not (engine.ENGINE_ROOT / "scripts" / "tax_doc.py").exists()
-    assert engine.ENGINE_ROOT != project_root
+
+
+def test_runtime_snapshot_matches_manifest():
+    """运行时快照逐文件与清单里的 SHA-256 对齐。
+
+    少一个脚本、改一个字节都在这里报红，而不是等某个取数分支到运行时才炸。
+    """
+    runtime = engine.ENGINE_ROOT
+    manifest = json.loads((runtime / "MANIFEST.json").read_text(encoding="utf-8"))
+    listed = manifest["files"]
+    actual = {
+        path.relative_to(runtime).as_posix()
+        for folder in ("scripts", "data", "references")
+        for path in (runtime / folder).glob("*")
+        if path.is_file()
+    }
+    assert set(listed) == actual
+    bad = [rel for rel, digest in listed.items()
+           if hashlib.sha256((runtime / rel).read_bytes()).hexdigest() != digest]
+    assert not bad, bad
+
+
+def test_no_external_engine_lookup():
+    """分发出去的项目不能再从环境变量或同级目录找引擎。"""
+    project_root = Path(__file__).resolve().parents[1]
+    package = project_root / "src" / "tax_engine_mcp"
+    needles = ("TAX_ENGINE_ROOT", "find_engine_root")
+    offenders = []
+    for path in package.rglob("*"):
+        if not path.is_file() or "__pycache__" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        offenders.extend(f"{path.relative_to(project_root).as_posix()}: {needle}"
+                         for needle in needles if needle in text)
+    assert offenders == []
 
 
 def test_vendored_copies_match_fingerprint():
@@ -272,8 +314,8 @@ def test_vendored_copies_match_fingerprint():
     import hashlib
 
     pins = {
-        "tax_service": "b8235637b8937cc3c948d7ef4a8e16e887453d9d0f1ca07bbed15e54199f1841",
-        "tax_doc": "ef3f8cb2b5c59181a367f368e18cb92a77ed3e9bd9441eec40cca670dd2913de",
+        "tax_service": "5c68bda0a1fcff0ebcfb996528f4c79cd58cdc72d358e73857f489250bb63ff7",
+        "tax_doc": "4ae92d52346fddb1b660b85836a7d8d7cadde5961025369535d262519cff35a0",
     }
     got = {
         "tax_service": hashlib.sha256(

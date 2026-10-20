@@ -1,0 +1,575 @@
+{
+ "_note": "由 scripts/tax_ctax.py --update-columns 生成；parent=True 的行只能从栏目页看入口，检索按叶节点收所以 foundNum=0；name 优先取行内 nodesearchname，父栏目取导航锚文本",
+ "columns": [
+  {
+   "nodeid": "16",
+   "name": "财税新闻",
+   "dir": "csxw",
+   "foundNum": 7185,
+   "parent": false
+  },
+  {
+   "nodeid": "27",
+   "name": "税收实务",
+   "dir": "sssw",
+   "foundNum": 2875,
+   "parent": false
+  },
+  {
+   "nodeid": "20",
+   "name": "国际税讯",
+   "dir": "gjsx",
+   "foundNum": 2342,
+   "parent": false
+  },
+  {
+   "nodeid": "23",
+   "name": "税案通报",
+   "dir": "sswfaj",
+   "foundNum": 1648,
+   "parent": false
+  },
+  {
+   "nodeid": "26",
+   "name": "图解税收",
+   "dir": "tjss",
+   "foundNum": 1513,
+   "parent": false
+  },
+  {
+   "nodeid": "63",
+   "name": "地方税收法规",
+   "dir": "policy",
+   "foundNum": 1393,
+   "parent": false,
+   "parent_of": "24"
+  },
+  {
+   "nodeid": "39",
+   "name": "文学",
+   "dir": "sswh",
+   "foundNum": 904,
+   "parent": false
+  },
+  {
+   "nodeid": "17",
+   "name": "图片新闻",
+   "dir": "tpxw",
+   "foundNum": 902,
+   "parent": false
+  },
+  {
+   "nodeid": "64",
+   "name": "其他经济法规",
+   "dir": "policy",
+   "foundNum": 601,
+   "parent": false,
+   "parent_of": "24"
+  },
+  {
+   "nodeid": "31",
+   "name": "财税理论",
+   "dir": "csll",
+   "foundNum": 516,
+   "parent": false
+  },
+  {
+   "nodeid": "61",
+   "name": "中央财会法规",
+   "dir": "policy",
+   "foundNum": 493,
+   "parent": false,
+   "parent_of": "24"
+  },
+  {
+   "nodeid": "60",
+   "name": "中央税收法规",
+   "dir": "policy",
+   "foundNum": 423,
+   "parent": false,
+   "parent_of": "24"
+  },
+  {
+   "nodeid": "25",
+   "name": "政策解读",
+   "dir": "zcjd",
+   "foundNum": 414,
+   "parent": false
+  },
+  {
+   "nodeid": "40",
+   "name": "摄影",
+   "dir": "sswh",
+   "foundNum": 376,
+   "parent": false
+  },
+  {
+   "nodeid": "41",
+   "name": "融媒视界",
+   "dir": "sswh",
+   "foundNum": 353,
+   "parent": false
+  },
+  {
+   "nodeid": "13",
+   "name": "要闻",
+   "dir": "news",
+   "foundNum": 334,
+   "parent": false
+  },
+  {
+   "nodeid": "8131",
+   "name": "合规案例",
+   "dir": "zt",
+   "foundNum": 114,
+   "parent": false
+  },
+  {
+   "nodeid": "19",
+   "name": "地方税讯",
+   "dir": "dfsx",
+   "foundNum": 76,
+   "parent": false
+  },
+  {
+   "nodeid": "8249",
+   "name": "评论解读",
+   "dir": "zt",
+   "foundNum": 62,
+   "parent": false
+  },
+  {
+   "nodeid": "8158",
+   "name": "2026年新春走基层",
+   "dir": "zt",
+   "foundNum": 51,
+   "parent": false,
+   "parent_of": "36"
+  },
+  {
+   "nodeid": "8054",
+   "name": "2025年新春走基层",
+   "dir": "zt",
+   "foundNum": 35,
+   "parent": false,
+   "parent_of": "36"
+  },
+  {
+   "nodeid": "972",
+   "name": "信息发布",
+   "dir": "xxgk",
+   "foundNum": 35,
+   "parent": false,
+   "parent_of": "971"
+  },
+  {
+   "nodeid": "62",
+   "name": "国际税收法规",
+   "dir": "policy",
+   "foundNum": 31,
+   "parent": false,
+   "parent_of": "24"
+  },
+  {
+   "nodeid": "8259",
+   "name": "赓续长征精神 奋进复兴征程",
+   "dir": "zt",
+   "foundNum": 26,
+   "parent": false
+  },
+  {
+   "nodeid": "8242",
+   "name": "一线报道",
+   "dir": "zt",
+   "foundNum": 25,
+   "parent": false
+  },
+  {
+   "nodeid": "8254",
+   "name": "强基·微镜头",
+   "dir": "zt",
+   "foundNum": 20,
+   "parent": false
+  },
+  {
+   "nodeid": "973",
+   "name": "预算决算",
+   "dir": "xxgk",
+   "foundNum": 13,
+   "parent": false,
+   "parent_of": "971"
+  },
+  {
+   "nodeid": "8250",
+   "name": "税务行动",
+   "dir": "zt",
+   "foundNum": 12,
+   "parent": false
+  },
+  {
+   "nodeid": "8137",
+   "name": "权威解读",
+   "dir": "zt",
+   "foundNum": 7,
+   "parent": false
+  },
+  {
+   "nodeid": "8020",
+   "name": "财政部 国家税务总局公告",
+   "dir": "policy",
+   "foundNum": 7,
+   "parent": false
+  },
+  {
+   "nodeid": "8227",
+   "name": "税务行动",
+   "dir": "zt",
+   "foundNum": 6,
+   "parent": false
+  },
+  {
+   "nodeid": "8035",
+   "name": "综合税收政策",
+   "dir": "policy",
+   "foundNum": 6,
+   "parent": false
+  },
+  {
+   "nodeid": "8188",
+   "name": "申报指引",
+   "dir": "sssw",
+   "foundNum": 6,
+   "parent": false
+  },
+  {
+   "nodeid": "8028",
+   "name": "其他",
+   "dir": "policy",
+   "foundNum": 5,
+   "parent": false
+  },
+  {
+   "nodeid": "8036",
+   "name": "税收征管",
+   "dir": "policy",
+   "foundNum": 5,
+   "parent": false
+  },
+  {
+   "nodeid": "8192",
+   "name": "实务分析",
+   "dir": "sssw",
+   "foundNum": 5,
+   "parent": false
+  },
+  {
+   "nodeid": "8030",
+   "name": "增值税",
+   "dir": "policy",
+   "foundNum": 4,
+   "parent": false
+  },
+  {
+   "nodeid": "8186",
+   "name": "实务分析",
+   "dir": "sssw",
+   "foundNum": 4,
+   "parent": false
+  },
+  {
+   "nodeid": "8187",
+   "name": "疑难解答",
+   "dir": "sssw",
+   "foundNum": 4,
+   "parent": false
+  },
+  {
+   "nodeid": "8021",
+   "name": "国家税务总局公告",
+   "dir": "policy",
+   "foundNum": 3,
+   "parent": false
+  },
+  {
+   "nodeid": "8031",
+   "name": "企业所得税",
+   "dir": "policy",
+   "foundNum": 3,
+   "parent": false
+  },
+  {
+   "nodeid": "8034",
+   "name": "其他税种",
+   "dir": "policy",
+   "foundNum": 3,
+   "parent": false
+  },
+  {
+   "nodeid": "8023",
+   "name": "财税",
+   "dir": "policy",
+   "foundNum": 2,
+   "parent": false
+  },
+  {
+   "nodeid": "8033",
+   "name": "进出口税",
+   "dir": "policy",
+   "foundNum": 2,
+   "parent": false
+  },
+  {
+   "nodeid": "8185",
+   "name": "最新政策",
+   "dir": "sssw",
+   "foundNum": 2,
+   "parent": false
+  },
+  {
+   "nodeid": "8194",
+   "name": "申报指引",
+   "dir": "sssw",
+   "foundNum": 2,
+   "parent": false
+  },
+  {
+   "nodeid": "22",
+   "name": "税收文化",
+   "dir": "sswh",
+   "foundNum": 1,
+   "parent": false
+  },
+  {
+   "nodeid": "8017",
+   "name": "国家税务总局令",
+   "dir": "policy",
+   "foundNum": 1,
+   "parent": false
+  },
+  {
+   "nodeid": "8019",
+   "name": "国发（国办发）",
+   "dir": "policy",
+   "foundNum": 1,
+   "parent": false
+  },
+  {
+   "nodeid": "8024",
+   "name": "税总（办）发（函）",
+   "dir": "policy",
+   "foundNum": 1,
+   "parent": false
+  },
+  {
+   "nodeid": "8025",
+   "name": "财关税",
+   "dir": "policy",
+   "foundNum": 1,
+   "parent": false
+  },
+  {
+   "nodeid": "8027",
+   "name": "海关总署公告",
+   "dir": "policy",
+   "foundNum": 1,
+   "parent": false
+  },
+  {
+   "nodeid": "8193",
+   "name": "疑难解答",
+   "dir": "sssw",
+   "foundNum": 1,
+   "parent": false
+  },
+  {
+   "nodeid": "36",
+   "name": "热点专题",
+   "dir": "zt",
+   "foundNum": 0,
+   "parent": true
+  },
+  {
+   "nodeid": "24",
+   "name": "政策",
+   "dir": "policy",
+   "foundNum": 0,
+   "parent": true
+  },
+  {
+   "nodeid": "971",
+   "name": "信息公开",
+   "dir": "xxgk",
+   "foundNum": 0,
+   "parent": true
+  },
+  {
+   "nodeid": "8261",
+   "name": "影像|",
+   "dir": "sswh",
+   "foundNum": 0,
+   "parent": true
+  },
+  {
+   "nodeid": "8232",
+   "name": "第35个全国税收宣传月中国税务报融媒体报道专题",
+   "dir": "zt",
+   "foundNum": 0,
+   "parent": true,
+   "parent_of": "36"
+  },
+  {
+   "nodeid": "8165",
+   "name": "2026全国两会全媒体报道",
+   "dir": "zt",
+   "foundNum": 0,
+   "parent": true,
+   "parent_of": "36"
+  },
+  {
+   "nodeid": "8093",
+   "name": "第34个全国税收宣传月中国税务报融媒体报道专题",
+   "dir": "zt",
+   "foundNum": 0,
+   "parent": true,
+   "parent_of": "36"
+  },
+  {
+   "nodeid": "8061",
+   "name": "2025年全国两会全媒体报道",
+   "dir": "zt",
+   "foundNum": 0,
+   "parent": true,
+   "parent_of": "36"
+  },
+  {
+   "nodeid": "8142",
+   "name": "2025年度中国十大税收新闻暨世界税收十件大事发",
+   "dir": "zt",
+   "foundNum": 0,
+   "parent": true,
+   "parent_of": "36"
+  },
+  {
+   "nodeid": "1269",
+   "name": "新一轮财税体制改革专家谈",
+   "dir": "zt",
+   "foundNum": 0,
+   "parent": true,
+   "parent_of": "36"
+  },
+  {
+   "nodeid": "8001",
+   "name": "2024年度中国十大税收新闻暨世界税收十件大事发",
+   "dir": "zt",
+   "foundNum": 0,
+   "parent": true,
+   "parent_of": "36"
+  },
+  {
+   "nodeid": "1263",
+   "name": "奋进强国路阔步新征程",
+   "dir": "zt",
+   "foundNum": 0,
+   "parent": true,
+   "parent_of": "36"
+  },
+  {
+   "nodeid": "8196",
+   "name": "2026年重要财税法规合集",
+   "dir": "policy",
+   "foundNum": 0,
+   "parent": true
+  },
+  {
+   "nodeid": "1177",
+   "name": "2024年重要财税法规合集",
+   "dir": "policy",
+   "foundNum": 0,
+   "parent": true
+  },
+  {
+   "nodeid": "1069",
+   "name": "2023年重要财税法规合集",
+   "dir": "policy",
+   "foundNum": 0,
+   "parent": true
+  },
+  {
+   "nodeid": "898",
+   "name": "2022年重要财税法规合集",
+   "dir": "policy",
+   "foundNum": 0,
+   "parent": true
+  },
+  {
+   "nodeid": "752",
+   "name": "2021年重要财税法规合集",
+   "dir": "policy",
+   "foundNum": 0,
+   "parent": true
+  },
+  {
+   "nodeid": "757",
+   "name": "2020年重要财税法规合集",
+   "dir": "policy",
+   "foundNum": 0,
+   "parent": true
+  },
+  {
+   "nodeid": "8082",
+   "name": "2024年度企业所得税汇算清缴",
+   "dir": "sssw",
+   "foundNum": 0,
+   "parent": true
+  },
+  {
+   "nodeid": "1208",
+   "name": "2023年度企业所得税汇算清缴",
+   "dir": "sssw",
+   "foundNum": 0,
+   "parent": true
+  },
+  {
+   "nodeid": "1095",
+   "name": "2022年度企业所得税汇算清缴",
+   "dir": "sssw",
+   "foundNum": 0,
+   "parent": true
+  },
+  {
+   "nodeid": "936",
+   "name": "2021年度企业所得税汇算清缴",
+   "dir": "sssw",
+   "foundNum": 0,
+   "parent": true
+  },
+  {
+   "nodeid": "785",
+   "name": "2020年度企业所得税汇算清缴",
+   "dir": "sssw",
+   "foundNum": 0,
+   "parent": true
+  },
+  {
+   "nodeid": "8087",
+   "name": "2024年度个人所得税汇算清缴",
+   "dir": "sssw",
+   "foundNum": 0,
+   "parent": true
+  },
+  {
+   "nodeid": "1202",
+   "name": "2023年度个人所得税汇算清缴",
+   "dir": "sssw",
+   "foundNum": 0,
+   "parent": true
+  },
+  {
+   "nodeid": "1118",
+   "name": "2022年度个人所得税汇算清缴",
+   "dir": "sssw",
+   "foundNum": 0,
+   "parent": true
+  }
+ ]
+}

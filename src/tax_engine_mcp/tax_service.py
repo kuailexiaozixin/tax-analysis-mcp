@@ -12,8 +12,8 @@
 逐源检索的参数细节（仍留在各源脚本，按需扩展）。
 
 本文件是逐项目副本：CLI、API、MCP 各自带一份，三份内容要求逐字节相同，
-由各自的测试用 SHA-256 校验。引擎仓库里没有这一层，适配器只读引擎的
-取数与判据脚本，不往引擎目录写任何文件。
+由各自的测试用 SHA-256 校验。引擎仓库里没有这一层，适配器只读包内的
+运行时快照，不往任何外部目录写文件。
 """
 from __future__ import annotations
 
@@ -36,14 +36,14 @@ import tax_search
 
 from . import tax_doc
 
-#: 引擎根与模板文件路径由适配器引导层注入：本副本住在适配器包里，
-#: 不能再用 __file__ 的父目录去猜引擎在哪。
+#: 运行时根与模板文件路径由引导层注入：本副本住在适配器包里，
+#: 不自己用 __file__ 的父目录去猜路径。
 ENGINE_ROOT: Path | None = None
 TEMPLATE_PATH: Path | None = None
 
 
 def configure(engine_root) -> None:
-    """引导层在导入引擎脚本后调用一次，告诉这一层引擎根目录在哪。"""
+    """引导层在导入运行时脚本后调用一次，告诉这一层快照根目录在哪。"""
     global ENGINE_ROOT, TEMPLATE_PATH
     ENGINE_ROOT = Path(engine_root).resolve()
     TEMPLATE_PATH = ENGINE_ROOT / "references" / "output_templates.md"
@@ -52,7 +52,7 @@ def configure(engine_root) -> None:
 def _require_ready() -> tuple[Path, Path]:
     if ENGINE_ROOT is None or TEMPLATE_PATH is None:
         raise ServiceError("internal_error",
-                           "引导层没有调用 configure()，本层不知道引擎根在哪", 500)
+                           "引导层没有调用 configure()，本层不知道运行时根在哪", 500)
     return ENGINE_ROOT, TEMPLATE_PATH
 
 TEMPLATE_KEYS = {
