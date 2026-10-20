@@ -1,0 +1,4 @@
+# 分发树要求逐字节稳定：tax_service.py 与 tax_doc.py 的 SHA-256 由用例钉住，
+# 检出时改了行尾就会让用例报红。Windows 上 core.autocrlf=true 会把 LF 换成 CRLF，
+# 所以这里显式要求 LF。
+* text=auto eol=lf
