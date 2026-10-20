@@ -20,7 +20,7 @@ def find_engine_root() -> Path:
     starts = [Path(__file__).resolve().parent, Path.cwd().resolve()]
     for start in starts:
         for base in (start, *start.parents):
-            candidates.extend((base, base / "tax-analysis-engine"))
+            candidates.extend((base, base / "tax-analysis-skill"))
 
     seen: set[Path] = set()
     for cand in candidates:
@@ -30,7 +30,7 @@ def find_engine_root() -> Path:
         if (cand / "scripts" / "tax_search.py").is_file():
             return cand
     raise RuntimeError(
-        "找不到 tax-analysis-engine：设置 TAX_ENGINE_ROOT 指向引擎根目录，"
+        "找不到 tax-analysis-skill：设置 TAX_ENGINE_ROOT 指向引擎根目录，"
         "或把本项目放在引擎同级目录"
     )
 

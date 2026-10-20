@@ -1,30 +1,28 @@
 # tax-analysis-mcp
 
-`tax-analysis-engine` 的 MCP 服务端。与引擎仓库分开存放，通过
+`tax-analysis-skill` 的 MCP 服务端。与引擎仓库分开存放，通过
 `TAX_ENGINE_ROOT` 或同级目录约定找到引擎的 `scripts/`，不复制任何税收判据。
 
-- Python ≥ 3.10；本机实测 Python 3.13.14、FastMCP 4.0.8。
+- Python ≥ 3.10；已验证 Python 3.13.14、FastMCP 4.0.8。
 - 默认传输是 stdio；`TAX_MCP_TRANSPORT=http` 可起 Streamable HTTP。
 - 引擎依赖 `requests`、`urllib3`，本项目已声明。
 
 ## 启动
 
 ```bash
-unset PYTHONHOME
-PY="D:/Python/cpython-3.13.14-windows-x86_64-none/python.exe"
 cd tax-analysis-mcp
-PYTHONPATH=src "$PY" -m tax_engine_mcp.server
+PYTHONPATH=src python -m tax_engine_mcp.server
 ```
 
 HTTP 模式：
 
 ```bash
 TAX_MCP_TRANSPORT=http TAX_MCP_HOST=127.0.0.1 TAX_MCP_PORT=8765 \
-  PYTHONPATH=src "$PY" -m tax_engine_mcp.server
+  PYTHONPATH=src python -m tax_engine_mcp.server
 ```
 
 HTTP 模式下 MCP 端点是 `http://127.0.0.1:8765/mcp`（FastMCP 默认路径，
-本项目未改）；客户端配 `/mcp/` 会先收到 307 跳到 `/mcp`。8765 被本机其它
+本项目未改）；客户端配 `/mcp/` 会先收到 307 跳到 `/mcp`。8765 被其它
 程序占用时改 `TAX_MCP_PORT`；端口被占时报的是
 `[winerror 10013] 以一种访问权限不允许的方式做了一个访问套接字的尝试`，
 不是权限问题。
@@ -36,21 +34,21 @@ stdio 与 HTTP 两种传输都已实测：15 个工具、3 个静态资源 +
 安装成命令（可选）：
 
 ```bash
-"$PY" -m pip install -e .
+python -m pip install -e .
 tax-analysis-mcp
 ```
 
-stdio 客户端配置示例（路径按本机替换）：
+stdio 客户端配置示例（路径按部署位置替换）：
 
 ```json
 {
   "mcpServers": {
     "tax-analysis": {
-      "command": "D:/Python/cpython-3.13.14-windows-x86_64-none/python.exe",
+      "command": "python",
       "args": ["-m", "tax_engine_mcp.server"],
       "env": {
-        "PYTHONPATH": "C:/Users/贺新/Documents/Qoder/2026-09-25/f869d62f/tax-analysis-mcp/src",
-        "TAX_ENGINE_ROOT": "C:/Users/贺新/Documents/Qoder/2026-09-25/f869d62f/tax-analysis-engine"
+        "PYTHONPATH": "/path/to/tax-analysis-mcp/src",
+        "TAX_ENGINE_ROOT": "/path/to/tax-analysis-skill"
       }
     }
   }
