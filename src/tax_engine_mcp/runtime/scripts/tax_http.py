@@ -87,7 +87,7 @@ class SerialGate:
     site = "该站"
 
     def __init__(self, path: Path = None, timeout: float = 180.0):
-        self.path = Path(path) if path else Path(tempfile.gettempdir()) / "tax-analysis-skill.lock"
+        self.path = Path(path) if path else Path(tempfile.gettempdir()) / "tax-analysis.lock"
         self.timeout = float(timeout)
         self._fh = None
         self._thread_lock = threading.Lock()

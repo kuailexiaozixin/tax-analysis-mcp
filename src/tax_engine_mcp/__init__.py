@@ -1,3 +1,3 @@
-"""tax-analysis-skill 的 MCP 适配器。"""
+"""税务问题分析引擎的 MCP 适配器。"""
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"

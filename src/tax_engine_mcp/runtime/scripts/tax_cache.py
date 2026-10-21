@@ -5,7 +5,7 @@
 本模块是缓存逻辑的**唯一实现**：`tax_search.py`（NPC 检索）、`tax_fgk.py`
 （总局法规库清单）、`tax_detail.py`（法规详情元数据）都从这里导入。
 
-默认关闭，开启后写入 ~/.cache/tax-analysis-skill，按 max_age(TTL, 秒) 失效。
+默认关闭，开启后写入 ~/.cache/tax-analysis，按 max_age(TTL, 秒) 失效。
 
 命名空间：同一个缓存目录下会同时躺着检索清单、法规库清单、详情元数据。
 三者用 namespace 隔离，靠写盘时记下的 `_ns` 字段区分——**不是**靠文件名或
@@ -38,7 +38,7 @@ class CacheManager:
     def __init__(self, enabled: bool = False, namespace: str = "default"):
         self._enabled = enabled
         self.namespace = namespace
-        self.dir = Path.home() / ".cache" / "tax-analysis-skill"
+        self.dir = Path.home() / ".cache" / "tax-analysis"
 
     @property
     def enabled(self) -> bool:

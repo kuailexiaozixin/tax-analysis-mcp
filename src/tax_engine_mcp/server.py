@@ -1,4 +1,4 @@
-"""tax-analysis-skill 的 MCP 服务端。
+"""税务问题分析引擎的 MCP 服务端。
 
 工具按任务组织，不按引擎脚本切：一次调用完成检索、读法规、展开算式或
 生成检查件。引擎的静态词表与模板走资源，成稿模板走 prompt，避免把
@@ -21,7 +21,7 @@ from typing import Annotated
 from .engine import tax_service
 
 INSTRUCTIONS = """\
-税收政策分析引擎（tax-analysis-skill）的 MCP 入口。
+税收政策分析引擎的 MCP 入口。
 
 主线：① 判型 → ② 依据覆盖率 → ③④ 检索 → ⑧ 读法规与定级 → ⑥ 按模板成稿。
 离线工具（classify / coverage / calc / ledger / intake / control）不联网；
@@ -41,7 +41,7 @@ analyze / cases 会访问外部站点。
 mcp = FastMCP(
     name="tax-analysis",
     instructions=INSTRUCTIONS,
-    version="0.2.0",
+    version="0.2.1",
 )
 
 _READ_OFFLINE = ToolAnnotations(read_only_hint=True, open_world_hint=False)

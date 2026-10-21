@@ -564,7 +564,7 @@ _last_request_at = 0.0
 # 一个进程打 NPC。锁在进程退出时由操作系统自动释放，崩溃不会留死锁。
 # 闸本体在 tax_http.SerialGate（搜狗微信共用同一份实现），这里只钉 NPC 的默认值。
 SERIAL_LOCK_TIMEOUT = float(os.getenv("TAX_NPC_LOCK_TIMEOUT", "180"))
-_SERIAL_LOCK_PATH = Path(tempfile.gettempdir()) / "tax-analysis-skill-npc.lock"
+_SERIAL_LOCK_PATH = Path(tempfile.gettempdir()) / "tax-analysis-npc.lock"
 
 
 class NpcSerialGate(tax_http.SerialGate):

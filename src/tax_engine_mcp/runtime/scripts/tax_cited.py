@@ -12,7 +12,7 @@
     命中即零网络；只有官方域 URL 才允许入库。
 
 纯字符串 + 本地文件读写，不联网、不发请求，可离线逐条钉住。缓存默认落在
-~/.cache/tax-analysis-skill/cited_links.json，与仓库解耦（随人随机器长）。
+~/.cache/tax-analysis/cited_links.json，与仓库解耦（随人随机器长）。
 """
 
 import json
@@ -22,7 +22,7 @@ from pathlib import Path
 
 OFFICIAL_HOSTS = ("chinatax.gov.cn",)
 CACHE_DIR = Path(os.environ.get("TAX_CACHE_DIR",
-                                str(Path.home() / ".cache" / "tax-analysis-skill")))
+                                str(Path.home() / ".cache" / "tax-analysis")))
 CITED_LINKS = CACHE_DIR / "cited_links.json"
 
 
