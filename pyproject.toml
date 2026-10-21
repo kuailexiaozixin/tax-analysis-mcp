@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tax-analysis-mcp"
 version = "0.2.2"
-description = "税务问题分析引擎的 MCP 适配器"
+description = "给 MCP 客户端用的税务分析工具集：19 个只读工具、法规检索与分层底稿、成稿模板 prompt。"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
