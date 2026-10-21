@@ -1,16 +1,7 @@
 {
   "engine": "tax-analysis-skill",
-  "engine_version": "3.57.0",
+  "engine_version": "3.58.0",
   "files": {
-    "data/contract_intake_template.json": "771e60f68a16cabb4515ffc691207c76e8f206a93ee64e1e1a20f2d98f158edf",
-    "data/control_activities.json": "403ab60fdb193c2af97017d3a7bf7b9f0cd69e997959d89b16c70fdf1463e5e3",
-    "data/ctax_columns.json": "62a546132f46c8295d03fb6b1e77f9d7c7a84defaacd0d06a643dcdedbca2477",
-    "data/evidence_requirements.json": "dc1b2e8bd1b1d099b5dcb21a996694400b8af26f5a1cdf15685fcb2ab57c4aae",
-    "data/inspection_domains.json": "b5100569704cf65140a5ff98c12e7d399f02e61acc8d9c5e617103a5abcaaf20",
-    "data/ledger_rules.json": "60c152aa2f112a46dc33d71868ec48c1f7fa998ed4ab6bf7eac31f2fe5649b0d",
-    "data/shui5_columns.json": "d8c9676854994648b668502dc4e1046c1b4b56fb2323a32a12fc8d9408bd511b",
-    "references/output_templates.md": "b4e67f885ec9d7eeba0237ccb37b342ffcf77dd9b4e8416c4ce3c3133165019d",
-    "references/tax_risk_framework.md": "7ddd0305359c391930474b510196781fef862fcb4570219d57cfdbb2b7c24da1",
     "scripts/tax_aggregator.py": "8e395e7322776cb51f4b701c66f9f3ab00efdd30a1543ae61eec4b09e7eb4ee4",
     "scripts/tax_analyze.py": "7ba639facedf8a2ca3c1e568b358b06fb24c2bf33927b03ba8a3af8d4bc1707f",
     "scripts/tax_answer.py": "f0d259b741e6b7382e0ddb52ec7db892018f0381ec55180915175c086a45c363",
@@ -29,11 +20,21 @@
     "scripts/tax_inspect.py": "e45c691c8edc1993854405be8f78dd601cae170adeb8873429d72cc4597a6b50",
     "scripts/tax_intake.py": "34b1b65837760156bed296e37efc67c914fad02ff00ca59ea9276829a809c5c1",
     "scripts/tax_ledger.py": "e6724ad0e23e933992108baf4564376eb01dcd3fb13cd64aa169b84bc89ee9cf",
+    "scripts/tax_related.py": "1fdd3d3163523614b919f62d0d549c0ba3f7d9aea621063ce7de4a03931d0679",
     "scripts/tax_search.py": "a97cbba34a40cbd2183fd6970fee398496c2d6e2e2a730f7dc3cdb5311d9176a",
     "scripts/tax_shui5.py": "eb9652b0d06ffd46e9518bc960da6cfc1f67e268718674cde3c177bbf9f5928b",
     "scripts/tax_so360.py": "8eda55c90267ad5032cad3e7b189d0f48e5e382f532eaac30a87d19d7efa47a9",
     "scripts/tax_terms.py": "244897239141898450f78ca355977a29fc7cb364605a30623d469fb4b5443a91",
     "scripts/tax_web_search.py": "fbfbee48448c3bb5b7e41d8929de94c2fb16f68ba726b511ebbf27207f3c6854",
-    "scripts/tax_wechat.py": "3849f62dcb9187dec4ea3951f9849e29d3da848cf8ca0bb9bbbf35866fb6cea2"
+    "scripts/tax_wechat.py": "3849f62dcb9187dec4ea3951f9849e29d3da848cf8ca0bb9bbbf35866fb6cea2",
+    "data/contract_intake_template.json": "771e60f68a16cabb4515ffc691207c76e8f206a93ee64e1e1a20f2d98f158edf",
+    "data/control_activities.json": "403ab60fdb193c2af97017d3a7bf7b9f0cd69e997959d89b16c70fdf1463e5e3",
+    "data/ctax_columns.json": "62a546132f46c8295d03fb6b1e77f9d7c7a84defaacd0d06a643dcdedbca2477",
+    "data/evidence_requirements.json": "dc1b2e8bd1b1d099b5dcb21a996694400b8af26f5a1cdf15685fcb2ab57c4aae",
+    "data/inspection_domains.json": "b5100569704cf65140a5ff98c12e7d399f02e61acc8d9c5e617103a5abcaaf20",
+    "data/ledger_rules.json": "60c152aa2f112a46dc33d71868ec48c1f7fa998ed4ab6bf7eac31f2fe5649b0d",
+    "data/shui5_columns.json": "d8c9676854994648b668502dc4e1046c1b4b56fb2323a32a12fc8d9408bd511b",
+    "references/output_templates.md": "b4e67f885ec9d7eeba0237ccb37b342ffcf77dd9b4e8416c4ce3c3133165019d",
+    "references/tax_risk_framework.md": "7ddd0305359c391930474b510196781fef862fcb4570219d57cfdbb2b7c24da1"
   }
 }

@@ -23,16 +23,34 @@ TOOL_NAMES = {
     "check_evidence_coverage",
     "plan_tax_analysis",
     "search_tax_policies",
+    "search_gov_policies",
     "read_law",
     "find_official_interpretations",
+    "find_related_web_pages",
+    "gather_tax_evidence",
     "analyze_tax_question",
     "expand_calculation",
     "find_tax_cases",
     "audit_ledger",
     "simulate_inspection",
+    "blank_intake_form",
     "intake_contracts",
     "reconcile_contracts",
     "generate_controls",
+}
+
+PROMPT_TEMPLATE_KEYS = {
+    "analysis_six_sections": "analysis",
+    "option_comparison": "option_compare",
+    "fill_in_the_blank": "fill_blank",
+    "rule_statement": "rule_statement",
+    "entitlement_matrix": "entitlement_matrix",
+    "calculation_writeup": "calculation",
+    "insufficient_evidence": "insufficient_evidence",
+    "risk_self_check": "risk_self_check",
+    "ledger_review": "ledger",
+    "intake_review": "intake",
+    "inspection_interview": "inspection",
 }
 
 
@@ -148,6 +166,23 @@ def test_intake_review_prompt_uses_nested_template():
     assert "### 多合同受理条件块" in text
 
 
+def test_every_output_template_has_a_prompt():
+    """11 份成稿模板都要有对应 prompt；引擎新增模板而这里漏挂会报红。"""
+    async def body():
+        async with Client(server.mcp) as client:
+            return await client.list_prompts()
+
+    prompts = {prompt.name for prompt in _run(body())}
+    assert prompts == set(PROMPT_TEMPLATE_KEYS)
+    assert set(PROMPT_TEMPLATE_KEYS.values()) == set(server.tax_service.TEMPLATE_KEYS)
+
+    for name, key in PROMPT_TEMPLATE_KEYS.items():
+        text = get_prompt(name, {"question": "测试问题"}).messages[0].content.text
+        heading = server.tax_service.TEMPLATE_KEYS[key]
+        assert heading in text, (name, key)
+        assert "测试问题" in text
+
+
 # ── 离线工具 ───────────────────────────────────────────────────────────────
 
 def test_health_tool_reports_engine_root_and_counts():
@@ -202,6 +237,71 @@ def test_search_rejects_multi_source_pagination_before_network():
         )
 
 
+def test_gov_search_forwards_every_filter(monkeypatch):
+    captured = {}
+
+    def fake_search_gov(query, **kwargs):
+        captured["query"] = query
+        captured.update(kwargs)
+        return {
+            "query": query,
+            "source": kwargs["source"],
+            "page": kwargs["page"],
+            "page_size": kwargs["size"],
+            "total": 1,
+            "has_next": False,
+            "items": [{"title": "测试文件"}],
+            "meta": {"filters": {"xxgkAging": kwargs["aging"]}},
+        }
+
+    monkeypatch.setattr(server.tax_service, "search_gov", fake_search_gov)
+    data = call_tool(
+        "search_gov_policies",
+        {
+            "query": "研发费用",
+            "source": "fgk",
+            "size": 5,
+            "page": 1,
+            "scope": "fulltext",
+            "exact": True,
+            "sort": "date",
+            "date_from": "2026-01-01",
+            "date_to": "2026-09-30",
+            "aging": "全文有效",
+            "body": True,
+            "file_only": False,
+            "tax_type": "企业所得税",
+            "doc_type": "财政部税务总局公告",
+            "doc_year": "2026",
+            "doc_no": "12",
+            "effect_level": "财税文件",
+        },
+    ).data
+    assert captured["query"] == "研发费用"
+    assert captured["source"] == "fgk"
+    assert captured["scope"] == "fulltext"
+    assert captured["exact"] is True
+    assert captured["body"] is True
+    assert captured["file_only"] is False
+    assert captured["tax_type"] == "企业所得税"
+    assert captured["effect_level"] == "财税文件"
+    assert data["items"][0]["title"] == "测试文件"
+    assert data["meta"]["filters"]["xxgkAging"] == "全文有效"
+
+
+def test_gov_search_rejects_fgk_page_and_chinatax_body_before_network():
+    with pytest.raises(ToolError, match="page_not_supported"):
+        call_tool(
+            "search_gov_policies",
+            {"query": "增值税", "source": "fgk", "page": 2},
+        )
+    with pytest.raises(ToolError, match="body 只在 source=fgk"):
+        call_tool(
+            "search_gov_policies",
+            {"query": "增值税", "source": "chinatax", "body": True},
+        )
+
+
 def test_read_law_combines_metadata_and_text(monkeypatch):
     monkeypatch.setattr(
         server.tax_service,
@@ -233,13 +333,49 @@ def test_read_law_maps_not_found_to_tool_error(monkeypatch):
         call_tool("read_law", {"bbbs_id": "nope"})
 
 
+def test_find_related_web_pages_forwards_keyword(monkeypatch):
+    captured = {}
+
+    def fake_related(law_id, keyword=""):
+        captured.update(law_id=law_id, keyword=keyword)
+        return {"law_id": law_id, "law_title": "增值税法", "keyword": keyword,
+                "total": 1, "sources": [{"title": "解读A", "source_label": "税屋"}]}
+
+    monkeypatch.setattr(server.tax_service, "web_related", fake_related)
+    data = call_tool(
+        "find_related_web_pages", {"bbbs_id": "abc", "keyword": "税率"}).data
+    assert captured == {"law_id": "abc", "keyword": "税率"}
+    assert data["sources"][0]["source_label"] == "税屋"
+
+
+def test_find_related_web_pages_maps_upstream_error(monkeypatch):
+    def broken(law_id, keyword=""):
+        raise server.tax_service.ServiceError("upstream_error", "找相关网页失败", 502)
+
+    monkeypatch.setattr(server.tax_service, "web_related", broken)
+    with pytest.raises(ToolError, match="upstream_error"):
+        call_tool("find_related_web_pages", {"bbbs_id": "abc"})
+
+
+def test_blank_intake_form_round_trips_through_intake():
+    doc = call_tool("blank_intake_form").data["document"]
+    assert [c["代号"] for c in doc["合同"]] == ["CT-1"]
+    assert [u["代号"] for u in doc["判断单元"]] == ["U1"]
+
+    doc["合同"][0]["名称"] = "采购合同"
+    checked = call_tool("intake_contracts", {"document": doc}).data
+    assert checked["缺维度数"] == 9
+
+
 def test_analyze_tool_returns_structured_draft(monkeypatch):
-    def fake_answer(question, at="", read_body=True, check_citations=True):
+    def fake_answer(question, at="", read_body=True, check_citations=True,
+                    max_per_round=None):
         return {
             "question": question,
             "at": at,
             "read_body": read_body,
             "check_citations": check_citations,
+            "max_per_round": max_per_round,
             "primary": {"title": "测试依据"},
             "supporting": [],
         }
@@ -247,12 +383,37 @@ def test_analyze_tool_returns_structured_draft(monkeypatch):
     monkeypatch.setattr(server.tax_service, "analyze_answer", fake_answer)
     data = call_tool(
         "analyze_tax_question",
-        {"question": "测试问题", "at": "2026-10-20", "read_body": False},
+        {"question": "测试问题", "at": "2026-10-20", "read_body": False,
+         "max_per_round": 20},
     ).data
     assert data["question"] == "测试问题"
     assert data["at"] == "2026-10-20"
     assert data["read_body"] is False
+    assert data["max_per_round"] == 20
     assert data["primary"]["title"] == "测试依据"
+
+
+def test_gather_tool_returns_evidence_and_forwards_limit(monkeypatch):
+    def fake_gather(question, at="", read_body=True, check_citations=True,
+                    max_per_round=None):
+        return {
+            "question": question,
+            "at": at,
+            "max_per_round": max_per_round,
+            "rounds": [{"round": 1, "hits": 2}],
+            "evidence": [{"title": "测试证据"}],
+            "errors": [],
+        }
+
+    monkeypatch.setattr(server.tax_service, "analyze_gather", fake_gather)
+    data = call_tool(
+        "gather_tax_evidence",
+        {"question": "测试问题", "at": "2026-10-20", "max_per_round": 8},
+    ).data
+    assert data["question"] == "测试问题"
+    assert data["max_per_round"] == 8
+    assert data["rounds"][0]["hits"] == 2
+    assert data["evidence"][0]["title"] == "测试证据"
 
 
 def test_service_layer_lives_here_not_in_engine():
@@ -314,7 +475,7 @@ def test_vendored_copies_match_fingerprint():
     import hashlib
 
     pins = {
-        "tax_service": "5c68bda0a1fcff0ebcfb996528f4c79cd58cdc72d358e73857f489250bb63ff7",
+        "tax_service": "aa156a7db79d44a706c4fba9561b27ba7e71fedcfadd717976b54bdf5cb0fde9",
         "tax_doc": "4ae92d52346fddb1b660b85836a7d8d7cadde5961025369535d262519cff35a0",
     }
     got = {

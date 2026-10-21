@@ -25,21 +25,23 @@ INSTRUCTIONS = """\
 
 主线：① 判型 → ② 依据覆盖率 → ③④ 检索 → ⑧ 读法规与定级 → ⑥ 按模板成稿。
 离线工具（classify / coverage / calc / ledger / intake / control）不联网；
-search / read_law / interpretations / analyze / cases 会访问外部站点。
+search / search_gov / read_law / interpretations / web-related / gather /
+analyze / cases 会访问外部站点。
 
 使用纪律：
 - 先用 classify_tax_question 与 check_evidence_coverage 看清题型和缺口，
   再检索；不要凭标题猜依据。
 - 检索结果的 meta.errors 是取数失败，不是「该源没有内容」；写答案时要把
   缺口说清楚，不得补写未检索到的规定。
-- analyze_tax_question 返回分层底稿，不写最终答案；成稿用 prompts 里的模板。
+- gather_tax_evidence 只取证据与缺口，analyze_tax_question 返回分层底稿，
+  两者都不写最终答案；成稿用 prompts 里的模板。
 - 本服务不调用付费模型，也不修改任何外部系统。
 """
 
 mcp = FastMCP(
     name="tax-analysis",
     instructions=INSTRUCTIONS,
-    version="0.1.0",
+    version="0.2.0",
 )
 
 _READ_OFFLINE = ToolAnnotations(read_only_hint=True, open_world_hint=False)
@@ -153,6 +155,65 @@ def search_tax_policies(
 
 
 @mcp.tool(tags={"network", "law"}, annotations=_READ_WEB)
+def search_gov_policies(
+    query: str,
+    source: Annotated[
+        str, Field(description="chinatax（search5）或 fgk（税务法规库）")
+    ] = "chinatax",
+    size: Annotated[int, Field(description="条数 1–50")] = 10,
+    page: Annotated[int, Field(description="页码；fgk 不支持大于 1")] = 1,
+    scope: Annotated[str, Field(description="title 或 fulltext")] = "title",
+    exact: Annotated[bool, Field(description="精确分词")] = False,
+    sort: Annotated[str, Field(description="relevance 或 date")] = "relevance",
+    date_from: Annotated[str, Field(description="成文日期起，YYYY-MM-DD")] = "",
+    date_to: Annotated[str, Field(description="成文日期止，YYYY-MM-DD")] = "",
+    aging: Annotated[
+        str,
+        Field(description="时效：全文有效/已修改/全文失效/全文废止/尚未生效"),
+    ] = "",
+    body: Annotated[bool, Field(description="是否取正文；仅 fgk 有效")] = False,
+    file_only: Annotated[bool, Field(description="只搜文件类标签")] = True,
+    tax_type: Annotated[str, Field(description="税种分面，如 增值税")] = "",
+    doc_type: Annotated[str, Field(description="文种，如 财政部税务总局公告")] = "",
+    doc_year: Annotated[str, Field(description="发文字号年份四位")] = "",
+    doc_no: Annotated[str, Field(description="文号数字")] = "",
+    effect_level: Annotated[
+        str,
+        Field(description="效力等级：法律/行政法规/国务院文件/税务部门规章/"
+                          "税务规范性文件/财税文件/其他文件/工作通知"),
+    ] = "",
+) -> dict:
+    """税务总局站内或税务法规库的单源检索，带全部收窄维度。
+
+    与 search_tax_policies 的差别：这一路直连 search5，能用成文日期区间、
+    时效、税种、文种、年份、文号、效力等级收窄；fgk 在此基础上只保留法规库
+    条目。返回 items 与 meta.filters/filter_note/total_hits/pages_scanned。
+    fgk 没有页码，page>1 报 page_not_supported；body 只对 fgk 有效，
+    对 chinatax 传 true 会报 invalid_parameter。
+    """
+    return _call(
+        tax_service.search_gov,
+        query,
+        source=source,
+        size=size,
+        page=page,
+        scope=scope,
+        exact=exact,
+        sort=sort,
+        date_from=date_from,
+        date_to=date_to,
+        aging=aging,
+        body=body,
+        file_only=file_only,
+        tax_type=tax_type,
+        doc_type=doc_type,
+        doc_year=doc_year,
+        doc_no=doc_no,
+        effect_level=effect_level,
+    )
+
+
+@mcp.tool(tags={"network", "law"}, annotations=_READ_WEB)
 def read_law(bbbs_id: str, include_text: bool = True) -> dict:
     """⑧ 读取一部法规：元数据，以及可选的正文段落。
 
@@ -188,19 +249,55 @@ def find_official_interpretations(
     )
 
 
+@mcp.tool(tags={"network", "law"}, annotations=_READ_WEB)
+def find_related_web_pages(bbbs_id: str, keyword: str = "") -> dict:
+    """按法规找实务解读与相关网页（税屋、公众号、全网）。
+
+    bbbs_id 取 search_tax_policies 结果里的 id。返回 sources 的
+    source_label 标明来自哪一路；这些页面是实务线索，不能替代官方原文。
+    engine_error 非空表示全网那一路被拦截，不代表没有相关内容。
+    """
+    return _call(tax_service.web_related, bbbs_id, keyword=keyword)
+
+
+@mcp.tool(tags={"network", "analysis"}, annotations=_READ_WEB)
+def gather_tax_evidence(
+    question: str,
+    at: str = "",
+    read_body: bool = True,
+    check_citations: bool = True,
+    max_per_round: int | None = None,
+) -> dict:
+    """⑤ 只跑计划里的多轮检索与定级，返回证据与缺口，不成稿。
+
+    与 analyze_tax_question 的区别：这一路保留 plan/rounds 等中间结构，
+    适合在成稿前检查每一轮取到了什么。at 是观察时点（YYYY-MM-DD）；
+    max_per_round 控制每轮取数上限（1–200）；部分源失败留在 errors 里。
+    """
+    return _call(
+        tax_service.analyze_gather,
+        question,
+        at=at,
+        read_body=read_body,
+        check_citations=check_citations,
+        max_per_round=max_per_round,
+    )
+
+
 @mcp.tool(tags={"network", "analysis"}, annotations=_READ_WEB)
 def analyze_tax_question(
     question: str,
     at: str = "",
     read_body: bool = True,
     check_citations: bool = True,
+    max_per_round: int | None = None,
 ) -> dict:
     """⑥ 一次跑完检索与分层，返回结构化底稿（不写最终答案）。
 
     联网且可能耗时。at 是观察时点（YYYY-MM-DD）；read_body 控制是否取税屋
-    正文；check_citations 控制是否回官方库核对文号。结果含 primary/
-    supporting/practice/to_verify 等分层与缺口；成稿请用 prompts 里的模板。
-    本工具不调用付费模型。
+    正文；check_citations 控制是否回官方库核对文号；max_per_round 控制每轮
+    取数上限（1–200）。结果含 primary/supporting/practice/to_verify 等分层与
+    缺口；成稿请用 prompts 里的模板。本工具不调用付费模型。
     """
     return _call(
         tax_service.analyze_answer,
@@ -208,6 +305,7 @@ def analyze_tax_question(
         at=at,
         read_body=read_body,
         check_citations=check_citations,
+        max_per_round=max_per_round,
     )
 
 
@@ -299,6 +397,16 @@ def simulate_inspection(
         signal=signal,
         tolerance=tolerance,
     )
+
+
+@mcp.tool(tags={"offline", "contract"}, annotations=_READ_OFFLINE)
+def blank_intake_form() -> dict:
+    """取一张空白多合同受理表，改完直接交给 intake_contracts。
+
+    返回 document；合同与判断单元各有一条占位记录，合同名称必须由调用方
+    填写，未填名会报 invalid_request。
+    """
+    return {"document": _call(tax_service.intake_blank)}
 
 
 @mcp.tool(tags={"offline", "contract"}, annotations=_READ_OFFLINE)
@@ -470,6 +578,51 @@ def inspection_interview(question: str = "") -> str:
 )
 def intake_review(question: str = "") -> str:
     return _template_prompt("intake", question)
+
+
+@mcp.prompt(
+    name="option_comparison",
+    description="按「逐条比对式」成稿：选项与依据逐条对照",
+    tags={"output-template"},
+)
+def option_comparison(question: str = "") -> str:
+    return _template_prompt("option_compare", question)
+
+
+@mcp.prompt(
+    name="fill_in_the_blank",
+    description="按「填空式」成稿：按空位逐项落值并标依据",
+    tags={"output-template"},
+)
+def fill_in_the_blank(question: str = "") -> str:
+    return _template_prompt("fill_blank", question)
+
+
+@mcp.prompt(
+    name="rule_statement",
+    description="按「规则陈述式」成稿：条件、例外与生效时点",
+    tags={"output-template"},
+)
+def rule_statement(question: str = "") -> str:
+    return _template_prompt("rule_statement", question)
+
+
+@mcp.prompt(
+    name="insufficient_evidence",
+    description="按「依据不足时」成稿：写明缺口与已查范围，不补写规定",
+    tags={"output-template"},
+)
+def insufficient_evidence(question: str = "") -> str:
+    return _template_prompt("insufficient_evidence", question)
+
+
+@mcp.prompt(
+    name="ledger_review",
+    description="按「账套巡检条件块」成稿",
+    tags={"output-template"},
+)
+def ledger_review(question: str = "") -> str:
+    return _template_prompt("ledger", question)
 
 
 def main() -> None:

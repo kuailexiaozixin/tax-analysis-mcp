@@ -28,11 +28,14 @@ import tax_cases
 import tax_control
 import tax_coverage
 import tax_detail
+import tax_fgk
 import tax_http
 import tax_intake
 import tax_inspect
 import tax_ledger
+import tax_related
 import tax_search
+import tax_web_search
 
 from . import tax_doc
 
@@ -72,6 +75,7 @@ TEMPLATE_KEYS = {
 STATUS_VALUES = (1, 2, 3, 4)
 SCOPE_VALUES = ("title", "fulltext")
 SORT_VALUES = ("relevance", "date")
+GOV_SOURCES = ("chinatax", "fgk")
 CASES_MODES = ("exhaustive", "recent")
 CASE_ORDER_VALUES = tuple(tax_cases.tws.ORDER_VALUES)
 
@@ -127,6 +131,15 @@ def _choice(value, name: str, allowed) -> str:
                            f"{name} 只认 {'／'.join(map(str, allowed))}，收到 {value!r}",
                            details={"field": name, "allowed": list(allowed)})
     return value
+
+
+def _opt_text(value, name: str) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ServiceError("invalid_parameter", f"{name} 必须是字符串",
+                           details={"field": name, "value": value})
+    return value.strip()
 
 
 def health() -> dict:
@@ -267,6 +280,117 @@ def search(query: str, *, sources: list[str] | None = None, size: int = 10,
     }
 
 
+def search_gov(query: str, *, source: str = "chinatax", size: int = 10,
+               page: int = 1, scope: str = "title", exact: bool = False,
+               sort: str = "relevance", date_from: str = "", date_to: str = "",
+               aging: str = "", body: bool = False, file_only: bool = True,
+               tax_type: str = "", doc_type: str = "", doc_year: str = "",
+               doc_no: str = "", effect_level: str = "") -> dict:
+    """税务总局站内（search5）与税务法规库的单源检索。
+
+    与 ``search`` 的区别是数据层而不是检索词：``search`` 的 ``chinatax`` 是聚合层
+    里的一路，只做关键词检索；这一路直接调 search5，能吃下范围、精确、成文日期、
+    时效、税种、文种、年份、文号、效力等级九组收窄维度。法规库（fgk）在这一层
+    再筛一遍清单并可按需取正文；它没有页码，翻页会报 page_not_supported。
+
+    两条路的取值域都由引擎校验：时效、效力等级、日期格式在 build_filters 里，
+    非法值发出去接口只会回 total=0，看起来像"筛空了"，所以在这里挡成 400。
+    """
+    query = _text(query, "query")
+    source = _choice(source, "source", GOV_SOURCES)
+    size = _int_in(size, "size", 1, 50)
+    page = _int_in(page, "page", 1, 1000)
+    scope = _choice(scope, "scope", SCOPE_VALUES)
+    sort = _choice(sort, "sort", SORT_VALUES)
+    date_from = _date(date_from, "date_from")
+    date_to = _date(date_to, "date_to")
+    aging = _opt_text(aging, "aging")
+    tax_type = _opt_text(tax_type, "tax_type")
+    doc_type = _opt_text(doc_type, "doc_type")
+    doc_year = _opt_text(doc_year, "doc_year")
+    doc_no = _opt_text(doc_no, "doc_no")
+    effect_level = _opt_text(effect_level, "effect_level")
+    if not isinstance(body, bool):
+        raise ServiceError("invalid_parameter", "body 必须是布尔值",
+                           details={"field": "body"})
+    if not isinstance(file_only, bool):
+        raise ServiceError("invalid_parameter", "file_only 必须是布尔值",
+                           details={"field": "file_only"})
+    if body and source != "fgk":
+        raise ServiceError("invalid_parameter",
+                           "body 只在 source=fgk 时有效：search5 那一路不回正文",
+                           details={"field": "body", "source": source})
+    if page != 1 and source == "fgk":
+        raise ServiceError(
+            "page_not_supported",
+            "税务法规库没有页码：它一次连扫若干页再按 size 截断；"
+            "要翻页请改用 source=\"chinatax\"",
+            details={"source": source})
+    try:
+        filters = tax_web_search.build_filters(
+            in_title=(scope == "title"), precise=exact,
+            tax_type=tax_type, doc_type=doc_type, doc_year=doc_year,
+            doc_no=doc_no, cwrq_from=date_from, cwrq_to=date_to,
+            aging=aging, effect_level=effect_level)
+    except ValueError as e:
+        raise ServiceError("invalid_parameter", str(e),
+                           details={"field": "filters"}) from e
+    order = "date_desc" if sort == "date" else "relevance"
+    try:
+        if source == "fgk":
+            raw = tax_fgk.search_fgk(
+                query, size=size, with_body=body, filters=filters,
+                file_only=file_only, order=order)
+        else:
+            raw = tax_web_search.search_chinatax(
+                query, page=page, size=size, filters=filters,
+                file_only=file_only, order=order)
+    except ValueError as e:
+        raise ServiceError("invalid_parameter", str(e)) from e
+    except Exception as e:
+        where = "税务法规库" if source == "fgk" else "税务总局"
+        raise ServiceError("upstream_error",
+                           f"{where}检索失败：{tax_http.short_reason(e)}",
+                           502) from e
+
+    items = raw.get("results")
+    if not isinstance(items, list):
+        items = raw.get("items")
+    if not isinstance(items, list):
+        items = []
+    if source == "fgk":
+        total = int(raw.get("total_hits") or raw.get("total") or 0)
+        has_next = False
+    else:
+        total = int(raw.get("total") or 0)
+        has_next = page * size < total
+    error = str(raw.get("_error") or "")
+    meta = {
+        "source": source,
+        "page": page,
+        "page_size": size,
+        "total": total,
+        "has_next": has_next,
+        "source_summary": {source: len(items)},
+        "errors": {source: error} if error else {},
+        "gaps": [],
+        "searched_at": raw.get("searched_at", ""),
+        "from_cache": bool(raw.get("_from_cache")),
+        "cache_age_s": raw.get("_cache_age_s"),
+        "filters": raw.get("filters", filters),
+        "filter_note": raw.get("_filter_note", ""),
+        "total_hits": raw.get("total_hits"),
+        "pages_scanned": raw.get("pages_scanned"),
+        "stopped_early": raw.get("stopped_early"),
+        "file_only": file_only,
+        "order": order,
+    }
+    return {
+        "query": query, "source": source, "page": page, "page_size": size,
+        "total": total, "has_next": has_next, "items": items, "meta": meta,
+    }
+
+
 def law_info(bbbs_id: str) -> dict:
     """法规元数据。404 与上游故障分开报。"""
     bbbs_id = _text(bbbs_id, "bbbs_id")
@@ -309,6 +433,25 @@ def law_interpretations(title: str, keyword: str = "",
                            502) from e
 
 
+def web_related(bbbs_id: str, keyword: str = "") -> dict:
+    """法规的实务相关网页：税屋、公众号与 360 全网。
+
+    标题从 law_info 取，组合与过滤在 tax_related：Flask 的
+    /api/web-related/<bbbs_id> 用的是同一份实现。
+    """
+    bbbs_id = _text(bbbs_id, "bbbs_id")
+    keyword = _opt_text(keyword, "keyword")
+    info = law_info(bbbs_id)
+    try:
+        payload = tax_related.collect_related(info["title"], keyword=keyword)
+    except Exception as e:
+        raise ServiceError("upstream_error",
+                           f"找相关网页失败：{tax_http.short_reason(e)}",
+                           502) from e
+    payload["law_id"] = bbbs_id
+    return payload
+
+
 def analyze_plan(question: str) -> dict:
     """⑥ 之前的检索计划；不联网。"""
     q = _text(question, "question")
@@ -334,10 +477,12 @@ def analyze_gather(question: str, at: str = "", read_body: bool = True,
 
 
 def analyze_answer(question: str, at: str = "", read_body: bool = True,
-                   check_citations: bool = True) -> dict:
+                   check_citations: bool = True,
+                   max_per_round: int | None = None) -> dict:
     """一次跑完检索与分层，回结构化底稿；不写最终答案。"""
     plan = analyze_gather(question, at=at, read_body=read_body,
-                          check_citations=check_citations)
+                          check_citations=check_citations,
+                          max_per_round=max_per_round)
     return tax_answer.compose(plan)
 
 
@@ -433,6 +578,15 @@ def inspection(answers: dict | None = None, domains: list[str] | None = None,
                                  scenario, signal, float(tolerance))
     except ValueError as e:
         raise ServiceError("invalid_parameter", str(e)) from e
+
+
+def intake_blank() -> dict:
+    """空白受理表；改完可直接传给 intake()。"""
+    try:
+        return tax_intake.blank()
+    except Exception as e:
+        raise ServiceError("internal_error", f"空白受理表生成失败：{e}",
+                           500) from e
 
 
 def intake(document: dict) -> dict:

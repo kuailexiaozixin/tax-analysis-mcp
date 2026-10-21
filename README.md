@@ -28,8 +28,8 @@ HTTP 模式下 MCP 端点是 `http://127.0.0.1:8765/mcp`（FastMCP 默认路径�
 `[winerror 10013] 以一种访问权限不允许的方式做了一个访问套接字的尝试`，
 不是权限问题。
 
-stdio 与 HTTP 两种传输都已实测：15 个工具、3 个静态资源 +
-`tax://templates/{key}`、6 个 prompt，`engine_health` 回到的 `engine_root`
+stdio 与 HTTP 两种传输都已实测：19 个工具、3 个静态资源 +
+`tax://templates/{key}`、11 个 prompt，`engine_health` 回到的 `engine_root`
 是本包内的 `runtime/`。
 
 安装成命令（可选）：
@@ -57,7 +57,7 @@ stdio 客户端配置示例（路径按部署位置替换）：
 
 ## 运行时快照与独立性
 
-- 本包 `src/tax_engine_mcp/runtime/` 是引擎的只读快照：24 个取数与判据脚本、
+- 本包 `src/tax_engine_mcp/runtime/` 是引擎的只读快照：25 个取数与判据脚本、
   7 个判据注册表、2 份输出模板与风险框架。引导层只把这一个目录放进
   `sys.path`，不 import 任何外部引擎包。
 - `runtime/MANIFEST.json` 记录快照对应的引擎版本与每个文件的 SHA-256；
@@ -83,13 +83,17 @@ stdio 客户端配置示例（路径按部署位置替换）：
 | `check_evidence_coverage` | 否 | ② 依据覆盖率；`evidence=null` 是「没检」，`[]` 是「检了没有」 |
 | `plan_tax_analysis` | 否 | ⑥ 之前的检索计划 |
 | `search_tax_policies` | 是 | ③④ 六源聚合；只有 `sources=["npc"]` 支持 `page>1` |
+| `search_gov_policies` | 是 | 税务总局／法规库单源检索，可叠加九组收窄维度 |
 | `read_law` | 是 | ⑧ 法规元数据 + 可选正文段落 |
 | `find_official_interpretations` | 是 | 只查 `.gov.cn` 的官方解读 |
+| `find_related_web_pages` | 是 | 按法规找税屋／公众号／全网实务线索；`engine_error` 非空表示取数没完成 |
+| `gather_tax_evidence` | 是 | ⑤ 只跑多轮检索与定级，返回证据、轮次与缺口 |
 | `analyze_tax_question` | 是 | ⑥ 检索 + 定级的结构化底稿，不写最终答案 |
 | `expand_calculation` | 否 | 参数化算式展开，不含现行税率 |
 | `find_tax_cases` | 是 | 类案台账；`order` 只认 `relevance/date_desc/category/date_asc` |
 | `audit_ledger` | 否 | 账套巡检 |
 | `simulate_inspection` | 否 | 稽查模拟问询 |
+| `blank_intake_form` | 否 | 取空白受理表；填好合同名称后交给 `intake_contracts` |
 | `intake_contracts` | 否 | 多合同受理（九维度覆盖） |
 | `reconcile_contracts` | 否 | 条款与履行记录对账 |
 | `generate_controls` | 否 | 九要素内控制度文本 |
@@ -108,10 +112,12 @@ stdio 客户端配置示例（路径按部署位置替换）：
 | `tax://output-templates` | 模板键与标题 |
 | `tax://templates/{key}` | 单份模板原文 |
 
-Prompt 把引擎的输出模板与取证纪律封在一起：
+Prompt 把引擎的输出模板与取证纪律封在一起，11 份成稿模板各有对应：
 
-`analysis_six_sections`、`calculation_writeup`、`entitlement_matrix`、
-`risk_self_check`、`inspection_interview`、`intake_review`。
+`analysis_six_sections`、`option_comparison`、`fill_in_the_blank`、
+`rule_statement`、`entitlement_matrix`、`calculation_writeup`、
+`insufficient_evidence`、`risk_self_check`、`ledger_review`、
+`intake_review`、`inspection_interview`。
 
 每个 prompt 接受可选的 `question`，返回「先取证、按模板成稿、缺依据写明」
 的完整指令。
@@ -142,7 +148,11 @@ Prompt 嵌入、离线工具、错误映射；联网工具只验参数边界或 
 ## 边界
 
 - 不提供付费模型解读；`analyze_tax_question` 只跑引擎的检索与分层。
-- `analyze_tax_question` 是同步长任务，可能耗时数十秒；客户端应设置足够超时。
+- `analyze_tax_question` 与 `gather_tax_evidence` 是同步长任务，可能耗时
+  数十秒；客户端应设置足够超时。`max_per_round` 控制每轮取数上限（1–200）。
 - 多源聚合没有页码维度；`page>1` 在发请求前直接报错。
+- `search_gov_policies` 的 `fgk` 一路没有页码，`page>1` 报
+  `page_not_supported`；`body` 只对 `fgk` 有效，对 `chinatax` 传 `true`
+  报 `invalid_parameter`。
 - 部分源取数失败写在 `meta.errors`，不是「该源没有内容」。
 - 重试策略仍归引擎取数层，服务端不另加一套。
