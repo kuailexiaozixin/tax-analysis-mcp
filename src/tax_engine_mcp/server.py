@@ -41,7 +41,7 @@ analyze / cases 会访问外部站点。
 mcp = FastMCP(
     name="tax-analysis",
     instructions=INSTRUCTIONS,
-    version="0.2.1",
+    version="0.2.2",
 )
 
 _READ_OFFLINE = ToolAnnotations(read_only_hint=True, open_world_hint=False)

@@ -808,7 +808,10 @@ def gather(question: str, at: str = "", read_body: bool = True,
                     r = S5.search_shui5(kw, size=1, read_body=False)
                     rows, err = _rows_and_error(r)
                 else:
-                    rows, err = fn(kw, sizes.get(src, 8))
+                    size = sizes.get(src, 8)
+                    if max_per_round is not None:
+                        size = min(size, max_per_round)
+                    rows, err = fn(kw, size)
             except Exception as e:                      # 单源失败不中断整轮
                 errors.append(f"第{rnd['round']}轮 {src} 失败："
                               f"{str(e).splitlines()[0][:110]}")

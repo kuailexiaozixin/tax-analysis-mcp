@@ -1,109 +1,102 @@
 # tax-analysis-mcp
 
-税务问题分析引擎的 MCP 服务端。项目自带引擎的运行时快照（取数脚本、判据
-注册表与输出模板），不读取外部引擎目录；整个目录拷到哪里都能单独运行。
+给支持 MCP 的 AI 客户端使用的税务分析服务端。模型可以调用 19 个工具完成
+判型、依据覆盖检查、六源检索、法规正文与官方解读、算式展开、类案查询与
+账套/合同检查；3 个静态资源与 1 个模板资源提供税种、算式和模板词表，
+11 个 prompt 把成稿模板与取证纪律封成可直接使用的指令。
 
-- Python ≥ 3.10；已验证 Python 3.13.14、FastMCP 4.0.8。
-- 默认传输是 stdio；`TAX_MCP_TRANSPORT=http` 可起 Streamable HTTP。
-- 运行时依赖 `requests`、`urllib3`、`playwright`（`playwright` 只在税屋
-  WAF 挑战那条路用，浏览器本体取本机已装的 Edge/Chrome/Firefox）。
+适合 Claude Desktop、Qoder 等 MCP 客户端。默认 stdio，也可起 Streamable
+HTTP；所有工具只读，服务端不修改账套或远端状态。
 
-## 启动
+## 快速开始
 
 ```bash
 cd tax-analysis-mcp
-PYTHONPATH=src python -m tax_engine_mcp.server
-```
-
-HTTP 模式：
-
-```bash
-TAX_MCP_TRANSPORT=http TAX_MCP_HOST=127.0.0.1 TAX_MCP_PORT=8765 \
-  PYTHONPATH=src python -m tax_engine_mcp.server
-```
-
-HTTP 模式下 MCP 端点是 `http://127.0.0.1:8765/mcp`（FastMCP 默认路径，
-本项目未改）；客户端配 `/mcp/` 会先收到 307 跳到 `/mcp`。8765 被其它
-程序占用时改 `TAX_MCP_PORT`；端口被占时报的是
-`[winerror 10013] 以一种访问权限不允许的方式做了一个访问套接字的尝试`，
-不是权限问题。
-
-stdio 与 HTTP 两种传输都已实测：19 个工具、3 个静态资源 +
-`tax://templates/{key}`、11 个 prompt，`engine_health` 回到的 `engine_root`
-是本包内的 `runtime/`。
-
-安装成命令（可选）：
-
-```bash
 python -m pip install -e .
-tax-analysis-mcp
 ```
 
-stdio 客户端配置示例（路径按部署位置替换）：
+在客户端配置里加入：
 
 ```json
 {
   "mcpServers": {
     "tax-analysis": {
-      "command": "python",
-      "args": ["-m", "tax_engine_mcp.server"],
-      "env": {
-        "PYTHONPATH": "/path/to/tax-analysis-mcp/src"
-      }
+      "command": "tax-analysis-mcp"
     }
   }
 }
 ```
 
-## 运行时快照与独立性
+客户端启动的进程不继承终端 `PATH` 时，把 `command` 换成安装生成的绝对
+路径：Windows 虚拟环境是 `<venv>\Scripts\tax-analysis-mcp.exe`，
+macOS/Linux 是 `<venv>/bin/tax-analysis-mcp`。在装它的虚拟环境里激活后，
+用 `where tax-analysis-mcp`（PowerShell 同）或 `which tax-analysis-mcp`
+可以看到实际位置。Windows 路径写进 JSON 时，反斜杠要写成 `\\`，或者直接
+改用 `/`。
 
-- 本包 `src/tax_engine_mcp/runtime/` 是引擎的只读快照：25 个取数与判据脚本、
-  7 个判据注册表、2 份输出模板与风险框架。引导层只把这一个目录放进
-  `sys.path`，不 import 任何外部引擎包。
-- `runtime/MANIFEST.json` 记录快照对应的引擎版本与每个文件的 SHA-256；
-  `tests/test_server.py::test_runtime_snapshot_matches_manifest` 逐文件核对，
-  缺文件或改一个字节都会报红。
-- 本项目另带两份实现：`tax_service.py`（服务契约层：参数边界、错误码、
-  结果形状）与 `tax_doc.py`（正文下载解析、官方解读检索）。CLI、API、MCP
-  各带一份，三份要求逐字节相同，由
-  `tests/test_server.py::test_vendored_copies_match_fingerprint` 用 SHA-256 钉住。
-- 与引擎仓库没有运行时依赖：引擎升级后，本项目的行为不变，直到快照被重新
-  同步并更新清单。`test_no_external_engine_lookup` 禁止代码回退到环境变量
-  或同级目录查找。
+连上后调用 `engine_health`：`status` 为 `ok`，`engine_root` 指向已安装
+包内的 `runtime/`，税种、算式骨架、模板计数均非零。随后可以问「研发费用
+加计扣除比例是多少」。例如调用 `classify_tax_question` 会得到（节选）：
 
-## 工具面
+```json
+{
+  "type": {"type": "lookup", "label": "政策查询", "confidence": 0.85},
+  "context": {"missing": ["time", "entity", "place", "scale"]},
+  "must_answer": "结论 + 效力位阶 + 文号 + 生效时点"
+}
+```
 
-工具按任务组织，不按引擎脚本切；一次调用完成检索、读法规、展开算式或
-生成检查件。
+HTTP 模式：
 
-| 工具 | 联网 | 说明 |
-|---|---|---|
-| `engine_health` | 否 | 引擎根、税种数、骨架数、模板数 |
-| `classify_tax_question` | 否 | ① 判型、前提缺口、追问探针 |
-| `check_evidence_coverage` | 否 | ② 依据覆盖率；`evidence=null` 是「没检」，`[]` 是「检了没有」 |
-| `plan_tax_analysis` | 否 | ⑥ 之前的检索计划 |
-| `search_tax_policies` | 是 | ③④ 六源聚合；只有 `sources=["npc"]` 支持 `page>1` |
-| `search_gov_policies` | 是 | 税务总局／法规库单源检索，可叠加九组收窄维度 |
-| `read_law` | 是 | ⑧ 法规元数据 + 可选正文段落 |
-| `find_official_interpretations` | 是 | 只查 `.gov.cn` 的官方解读 |
-| `find_related_web_pages` | 是 | 按法规找税屋／公众号／全网实务线索；`engine_error` 非空表示取数没完成 |
-| `gather_tax_evidence` | 是 | ⑤ 只跑多轮检索与定级，返回证据、轮次与缺口 |
-| `analyze_tax_question` | 是 | ⑥ 检索 + 定级的结构化底稿，不写最终答案 |
-| `expand_calculation` | 否 | 参数化算式展开，不含现行税率 |
-| `find_tax_cases` | 是 | 类案台账；`order` 只认 `relevance/date_desc/category/date_asc` |
-| `audit_ledger` | 否 | 账套巡检 |
-| `simulate_inspection` | 否 | 稽查模拟问询 |
-| `blank_intake_form` | 否 | 取空白受理表；填好合同名称后交给 `intake_contracts` |
-| `intake_contracts` | 否 | 多合同受理（九维度覆盖） |
-| `reconcile_contracts` | 否 | 条款与履行记录对账 |
-| `generate_controls` | 否 | 九要素内控制度文本 |
+```bash
+TAX_MCP_TRANSPORT=http TAX_MCP_HOST=127.0.0.1 TAX_MCP_PORT=8765 tax-analysis-mcp
+```
 
-写类工具全部标了 `readOnlyHint=true`：它们只读引擎与外部站点，不修改任何
-账套或远端状态。联网工具另标 `openWorldHint=true`。
+PowerShell 用 `$env:TAX_MCP_TRANSPORT='http'; tax-analysis-mcp`。端点为
+`http://127.0.0.1:8765/mcp`；端口被占用时改 `TAX_MCP_PORT`。
+
+从源码开发时不必安装，在仓库根目录运行：
+
+```bash
+PYTHONPATH=src python -m tax_engine_mcp.server
+```
+
+不带环境变量时走 stdio，进程会等待客户端握手，终端没有提示属正常。
+
+## 环境
+
+- Python ≥ 3.10；依赖见 `pyproject.toml`。
+- `playwright` 只在税屋 WAF 挑战那条路用，浏览器取系统已安装的
+  Edge/Chrome/Firefox。
+
+## 工具
+
+| 任务 | 工具 | 联网 | 说明 |
+|---|---|---|---|
+| 健康检查 | `engine_health` | 否 | 引擎根、税种数、骨架数、模板数 |
+| 判型 | `classify_tax_question` | 否 | 题型、前提缺口、追问探针 |
+| 依据覆盖 | `check_evidence_coverage` | 否 | 覆盖率；`evidence=null` 是「没检」，`[]` 是「检了没有」 |
+| 分析计划 | `plan_tax_analysis` | 否 | 题型、缺口、每轮目标与取数清单 |
+| 检索 | `search_tax_policies` | 是 | 六源聚合；只有 `sources=["npc"]` 支持 `page>1` |
+| 单源检索 | `search_gov_policies` | 是 | 税务总局／法规库，可叠加九组收窄维度 |
+| 读法规 | `read_law` | 是 | 元数据与可选正文段落 |
+| 官方解读 | `find_official_interpretations` | 是 | 只查 `.gov.cn` |
+| 实务线索 | `find_related_web_pages` | 是 | 税屋／公众号／全网；`engine_error` 非空表示全网那一路没取成，不代表没有相关内容 |
+| 取数定级 | `gather_tax_evidence` | 是 | 逐轮检索与定级，返回证据、轮次与缺口 |
+| 整题底稿 | `analyze_tax_question` | 是 | 检索 + 定级的结构化底稿，不写最终答复 |
+| 算式 | `expand_calculation` | 否 | 参数化展开，不含现行税率 |
+| 类案 | `find_tax_cases` | 是 | 台账；`order` 只认 `relevance/date_desc/category/date_asc` |
+| 账套巡检 | `audit_ledger` | 否 | 账套规则检查 |
+| 稽查模拟 | `simulate_inspection` | 否 | 生成问询单元 |
+| 空白受理表 | `blank_intake_form` | 否 | 填好合同名称后交给 `intake_contracts` |
+| 合同受理 | `intake_contracts` | 否 | 多合同九维度覆盖 |
+| 条款对账 | `reconcile_contracts` | 否 | 条款与履行记录对账 |
+| 内控生成 | `generate_controls` | 否 | 九要素内控制度文本 |
+
+所有工具都标了 `readOnlyHint=true`（只读）；联网工具另标
+`openWorldHint=true`。
 
 ## 资源与 Prompt
-
-资源放只读的小词表与模板，避免把大段文本塞进工具参数：
 
 | URI | 内容 |
 |---|---|
@@ -112,47 +105,42 @@ stdio 客户端配置示例（路径按部署位置替换）：
 | `tax://output-templates` | 模板键与标题 |
 | `tax://templates/{key}` | 单份模板原文 |
 
-Prompt 把引擎的输出模板与取证纪律封在一起，11 份成稿模板各有对应：
-
-`analysis_six_sections`、`option_comparison`、`fill_in_the_blank`、
-`rule_statement`、`entitlement_matrix`、`calculation_writeup`、
-`insufficient_evidence`、`risk_self_check`、`ledger_review`、
-`intake_review`、`inspection_interview`。
-
+11 个 prompt 把输出模板与取证纪律封在一起：`analysis_six_sections`、
+`option_comparison`、`fill_in_the_blank`、`rule_statement`、
+`entitlement_matrix`、`calculation_writeup`、`insufficient_evidence`、
+`risk_self_check`、`ledger_review`、`intake_review`、`inspection_interview`。
 每个 prompt 接受可选的 `question`，返回「先取证、按模板成稿、缺依据写明」
 的完整指令。
 
 ## 错误语义
 
-引擎错误统一转成 `ToolError` / `ResourceError`，文本保留引擎的 `code`，
-例如：
+引擎错误保留原始 `code`，例如：
 
 ```text
 [page_not_supported] 多源聚合没有页码维度：...；details={"sources": [...]}
 [unknown_question_type] ...；details={"allowed": [...]}
 ```
 
-资源模板不存在时，客户端收到的是 MCP 协议层错误，消息以
-`unknown_template` 开头；这是 FastMCP 对资源读取错误的包装方式。
+模板不存在时，客户端收到形如 `[unknown_template] ...` 的协议层错误。
 
-## 测试
+## 限制
+
+- 不提供付费模型解读；`analyze_tax_question` 只跑检索与分层。
+- `analyze_tax_question` 与 `gather_tax_evidence` 是同步长任务，可能耗时
+  数十秒；客户端要设置足够超时。`max_per_round` 控制每轮取数上限（1–200）。
+- 多源聚合没有页码维度，`page>1` 在发请求前直接报错。
+- `search_gov_policies` 的 `fgk` 一路没有页码；`body` 只对 `fgk` 有效。
+- 部分源取数失败写在 `meta.errors`，不是「该源没有内容」。
+
+## 独立运行与测试
+
+包内 `src/tax_engine_mcp/runtime/` 是取数脚本、判据注册表与输出模板的只读
+快照，`MANIFEST.json` 记录每个文件的 SHA-256；运行时不查环境变量，也不找
+同级目录。
 
 ```bash
-PYTHONPATH=src python -m pytest -q
+python -m pip install -e ".[test]"
+python -m pytest -q
 ```
 
-用例走 FastMCP 内存传输，覆盖工具目录、JSON Schema、静态资源与模板资源、
-Prompt 嵌入、离线工具、错误映射；联网工具只验参数边界或 monkeypatch 换掉
-服务函数，不联网、不调用付费模型。
-
-## 边界
-
-- 不提供付费模型解读；`analyze_tax_question` 只跑引擎的检索与分层。
-- `analyze_tax_question` 与 `gather_tax_evidence` 是同步长任务，可能耗时
-  数十秒；客户端应设置足够超时。`max_per_round` 控制每轮取数上限（1–200）。
-- 多源聚合没有页码维度；`page>1` 在发请求前直接报错。
-- `search_gov_policies` 的 `fgk` 一路没有页码，`page>1` 报
-  `page_not_supported`；`body` 只对 `fgk` 有效，对 `chinatax` 传 `true`
-  报 `invalid_parameter`。
-- 部分源取数失败写在 `meta.errors`，不是「该源没有内容」。
-- 重试策略仍归引擎取数层，服务端不另加一套。
+用例走 FastMCP 内存传输，不联网、不调用付费模型。
