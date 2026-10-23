@@ -18,6 +18,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 from typing import Annotated
 
+from . import __version__
 from .engine import tax_service
 
 INSTRUCTIONS = """\
@@ -41,7 +42,7 @@ analyze / cases 会访问外部站点。
 mcp = FastMCP(
     name="tax-analysis",
     instructions=INSTRUCTIONS,
-    version="0.2.2",
+    version=__version__,
 )
 
 _READ_OFFLINE = ToolAnnotations(read_only_hint=True, open_world_hint=False)
@@ -121,7 +122,7 @@ def search_tax_policies(
     query: str,
     sources: Annotated[
         list[str] | None,
-        Field(description="数据源；默认六源，可选 npc/chinatax/so360/shui5/wechat/ctax"),
+        Field(description="数据源；默认六源，可选 npc/chinatax/sogou/shui5/wechat/ctax"),
     ] = None,
     size: Annotated[int, Field(description="每源条数 1–50")] = 10,
     page: Annotated[int, Field(description="页码；只有 npc 单源支持大于 1")] = 1,

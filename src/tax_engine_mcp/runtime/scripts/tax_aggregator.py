@@ -5,7 +5,7 @@ Tax Policy Aggregator — concurrent multi-source search with dedup and ranking.
 Data source priority (按权威性排序):
   1. NPC API (flk.npc.gov.cn)       — 法律、行政法规，权威性最高
   2. chinatax.gov.cn (search5)      — 税务总局公告、解读，覆盖 fgk 法规库
-  3. 360 站内搜索 (m.so.com)        — 省局子站、地方文件
+  3. 搜狗网页检索 (m.sogou.com)   — 省局子站、地方文件
   4. 税屋 (shui5.cn)                — 实务解读
   5. 微信公众号 (搜狗微信)          — 实务解读
   6. 中国税网 (ctaxnews.com.cn)     — 中国税务报社：政策转载、解读、税案通报
@@ -13,7 +13,7 @@ Data source priority (按权威性排序):
 后四源默认开启：它们补的是前两个源（法规原文层）查不到的地方口径与实操层内容。
 权威性低于法规原文，输出里以 _authority_rank 排在后面。
 
-税屋的检索有两路（360 的 site:shui5.cn 与站内原生检索），正文要先过一次阿里云
+税屋的检索有两路（搜狗的 site:shui5.cn 与站内原生检索），正文要先过一次阿里云
 WAF：默认这一路只取链接（不要凭据），要正文时由 tax_shui5 启本机浏览器过一次
 挑战再连读。两路覆盖的是不同排序，一路 0 条不能读成另一路也 0 条。
 
@@ -29,7 +29,7 @@ Usage:
   python tax_aggregator.py "增值税" --size 10
   python tax_aggregator.py "小微企业优惠" --size 10 --json
   python tax_aggregator.py "加计扣除" --sources npc,chinatax
-  python tax_aggregator.py "资本化" --sources npc,chinatax,so360,shui5,wechat,ctax
+  python tax_aggregator.py "资本化" --sources npc,chinatax,sogou,shui5,wechat,ctax
 """
 
 import argparse
@@ -46,7 +46,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 from tax_search import search_tax, check_iso_date, DATE_FLOOR, DATE_CEIL
 from tax_web_search import search_chinatax, build_filters, label_scope_text
-from tax_so360 import so360_search
+from tax_sogou import sogou_search
 from tax_shui5 import search_shui5
 from tax_wechat import search_wechat
 from tax_ctax import search_ctax
@@ -55,16 +55,16 @@ from tax_ctax import search_ctax
 SOURCE_RANK = {
     "npc": 0,
     "chinatax": 1,
-    "so360": 2,
+    "sogou": 2,
     "shui5": 3,
     "wechat": 4,
     "ctax": 5,
 }
-DEFAULT_SOURCES = ["npc", "chinatax", "so360", "shui5", "wechat", "ctax"]
+DEFAULT_SOURCES = ["npc", "chinatax", "sogou", "shui5", "wechat", "ctax"]
 SOURCE_LABELS = {
     "npc": "📜 NPC法规库",
     "chinatax": "🏛️ 国家税务总局",
-    "so360": "🔎 360站内搜索",
+    "sogou": "🔎 搜狗搜索",
     "shui5": "🏠 税屋(实务解读)",
     "wechat": "💬 微信公众号(实务解读)",
     "ctax": "📰 中国税网(报社转载与税案)",
@@ -76,8 +76,7 @@ SOURCE_LABELS = {
 SOURCE_IMPACT = {
     "npc": "全国性法律法规层（法律/行政法规/司法解释）缺失，没有别的源能覆盖它",
     "chinatax": "总局公告、部门规章与官方解读层缺失",
-    "so360": "地方口径层缺失，税屋的检索也少了一路（税屋另有站内原生检索，"
-             "见 tax_shui5.search_shui5 的 channel 判据）",
+    "sogou": "地方口径层缺失，没有别的源能覆盖它",
     "shui5": "税屋的实务解读层缺失",
     "wechat": "微信公众号的实务解读层缺失",
     "ctax": "中国税网的报刊登载层缺失（税案通报与报刊视角的执行口径少这一路；"
@@ -88,7 +87,7 @@ SOURCE_IMPACT = {
 SOURCE_PLAIN = {
     "npc": "NPC 法规库",
     "chinatax": "税务总局",
-    "so360": "360 搜索",
+    "sogou": "搜狗搜索",
     "shui5": "税屋",
     "wechat": "微信公众号",
     "ctax": "中国税网",
@@ -101,12 +100,12 @@ SOURCE_PLAIN = {
 #     2020-07-30；中国税网 2026-10-19「增值税」全词 2,537 行起始、45,739 行截止、
 #     成对取 2025 全年 1,405 行，起止两枚各自独立生效。
 #   DATE_LOCAL_SOURCES — 三个网页源都没有日期参数，只能在取回的窗口内按条目
-#     自带日期补筛。360 那一路的解析结果里根本没有日期字段（tax_so360 的条目
-#     只有 title/url/snippet/source/site），所以它整源都会落进"无日期"那一档。
+#     自带日期补筛。搜狗与税屋的搜狗通道都从结果引用行取日期，公众号取结果块
+#     里的时间，三者都只有部分条目带日期，其余落进"无日期"那一档。
 # 把这两路混成一句"已按日期收窄"，读者会把本地补筛读成源端收窄，进而把
 # "该源这一轮 0 条"当成"该源在这个区间里没有文件"——这是要防的那一步。
 DATE_SERVER_SOURCES = ("npc", "chinatax", "ctax")
-DATE_LOCAL_SOURCES = ("so360", "shui5", "wechat")
+DATE_LOCAL_SOURCES = ("sogou", "shui5", "wechat")
 # 服务端那一档各自收的字段名。_date_scope_note 逐源点名靠这张表：加了源不登记
 # 这里，回显就会出现"某源由接口自己收窄"却没说收哪一枚字段的那种半截话。
 DATE_SERVER_FIELDS = {
@@ -171,11 +170,13 @@ def _build_gaps(sources: list, errors: dict, source_summary: dict,
 
     三条判定：
       1. 该源自己报了错（被拦、接口异常）→ 记一条缺口；
-      2. 税屋有两头检索（360 的 site:shui5.cn 与站内原生检索，见
-         `tax_shui5.search_shui5`）。只有这一轮**没走站内那一路**时，
-         "360 被拦而税屋 0 条"才是被 360 连带的，标 blocked_by；
-      3. 站内那一路走通了却还是 0 条，就不能再甩给 360——那是两条通道
-         各自这一轮没命中，归到税屋自己身上。
+      2. 税屋有两头检索（搜狗的 site:shui5.cn 与站内原生检索，见
+         `tax_shui5.search_shui5`）。只有搜狗那一路这一轮被拦或没走成时，
+         "税屋 0 条"才可能是被搜狗连带的，标 blocked_by；
+      3. 搜狗跑通了、站内也跑通了，各 0 条就不能再甩给搜狗——那是两条通道
+         各自这一轮没命中，归到税屋自己身上。没有 `_channels` 回报时不做推断：
+         那一轮到底走没走搜狗没有证据，按别的源（如聚合器自己的 sogou）的
+         失败去猜，会把两次独立请求混成一件事。
     """
     gaps = []
     for src in sources:
@@ -189,17 +190,20 @@ def _build_gaps(sources: list, errors: dict, source_summary: dict,
             })
 
     ch = shui5_channels or {}
+    sogou_status = ch.get("搜狗", "")
     native_status = ch.get("站内", "")
     # "命中/0 条" 才算这一路真跑过；"没走成/未走" 都还是没走到
     native_ran = native_status.startswith(("命中", "0 条"))
-    if ("so360" in errors and "shui5" in sources
+    sogou_failed = sogou_status.startswith(("被拦", "没走成"))
+    sogou_word = "被拦" if sogou_status.startswith("被拦") else "没走成"
+    if (sogou_failed and "shui5" in sources
             and not source_summary.get("shui5")
             and not any(g["source"] == "shui5" for g in gaps)):
         if native_ran:
             gaps.append({
                 "source": "shui5",
                 "label": SOURCE_LABELS.get("shui5", "shui5"),
-                "reason": f"360 被拦，站内原生检索这一轮也没命中（{native_status}）",
+                "reason": f"搜狗{sogou_word}，站内原生检索这一轮也没命中（{native_status}）",
                 "impact": "两条通道各按自己的排序取数，这一轮各 0 条只说明没取到，"
                           "不代表税屋没有这个主题的解读",
                 "do_not_substitute": True,
@@ -208,10 +212,10 @@ def _build_gaps(sources: list, errors: dict, source_summary: dict,
             gaps.append({
                 "source": "shui5",
                 "label": SOURCE_LABELS.get("shui5", "shui5"),
-                "reason": "360 被拦，而这一轮税屋只走了 360 的 site:shui5.cn 那一路"
+                "reason": f"搜狗{sogou_word}，而这一轮税屋只走了搜狗的 site:shui5.cn 那一路"
                           f"（站内那一路：{native_status or '本轮未走'}）",
-                "impact": "税屋这一层的空结果是被 360 连带的，不代表税屋没有内容",
-                "blocked_by": "so360",
+                "impact": "税屋这一层的空结果是被搜狗连带的，不代表税屋没有内容",
+                "blocked_by": "sogou",
                 "do_not_substitute": True,
             })
     return gaps
@@ -293,14 +297,14 @@ def aggregate_search(keyword: str, *,
               前面会让总局 2026 年的公告排在 NPC 2024 年的法律之后。
         date_from / date_to: YYYY-MM-DD 日期区间，任一端可缺。生效方式分两档，
               见 _date_scope_note：npc、chinatax、ctax 由接口自己收（公布日期／
-              成文日期／发布日期，三种含义都不同），so360、shui5、wechat 没有
+              成文日期／发布日期，三种含义都不同），sogou、shui5、wechat 没有
               日期参数，只能在本源取回的 size 条窗口内按条目日期补筛，计数写
               `_date_filter.local_window`，判读规则写 `_date_note`。没带日期的
               条目留在结果里并计入 no_date，不静默丢。
         file_only: 只落在税务总局那一路（search_chinatax 的同名参数），默认 True
               把这一路限定在十个文件类标签内。规则主体在境外辖区的专题（支柱二、
               全球最低税）文件类标签下实测 0 条，要传 False 连动态与境外立法编译
-              一起取；其余五路（npc、so360、shui5、wechat、ctax）没有这个维度，
+              一起取；其余五路（npc、sogou、shui5、wechat、ctax）没有这个维度，
               不受影响。
 
     Raises:
@@ -338,10 +342,10 @@ def aggregate_search(keyword: str, *,
                 search_chinatax, keyword, size=size, filters=date_filters,
                 file_only=file_only
             )
-        if "so360" in sources:
+        if "sogou" in sources:
             # 全网检索，再由调用方按需收窄站点；此处不带 site:
-            futures["so360"] = pool.submit(
-                so360_search, keyword, site="", size=size
+            futures["sogou"] = pool.submit(
+                sogou_search, keyword, site="", size=size
             )
         if "shui5" in sources:
             futures["shui5"] = pool.submit(
@@ -400,9 +404,7 @@ def aggregate_search(keyword: str, *,
                 st["got"] += 1
                 d = (item.get("publish_date") or "")[:10]
                 if not _ISO_DATE_RE.match(d):
-                    # 条目没有日期不等于日期在区间外。360 那一路的解析结果
-                    # 压根没有日期字段，误按"区间外"处理会把整源删掉，再把
-                    # 空清单读成"该源没有"。
+                    # 日期缺失不能证明条目在区间外，保留并计入未标日期项。
                     st["no_date"] += 1
                 elif (date_from and d < date_from) or (date_to and d > date_to):
                     st["out_of_range"] += 1
@@ -480,7 +482,7 @@ Examples:
                    help="relevance=按权威度分层；date=跨源按公布日期降序（不再分层）")
     p.add_argument("--from", dest="date_from", metavar="YYYY-MM-DD",
                    help="日期区间下界。npc 按公布日期、chinatax 按成文日期由接口收窄；"
-                        "so360/shui5/wechat 没有日期参数，只在本源取回的窗口内补筛")
+                        "sogou/shui5/wechat 没有日期参数，只在本源取回的窗口内补筛")
     p.add_argument("--to", dest="date_to", metavar="YYYY-MM-DD",
                    help="日期区间上界，生效方式同 --from")
     p.add_argument("--all-labels", action="store_true",

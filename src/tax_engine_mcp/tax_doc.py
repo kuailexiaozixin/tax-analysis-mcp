@@ -3,27 +3,25 @@
 
 引擎里这两件事写在 tax_server 的 Flask 路由层内，适配器要用就得连带把
 Flask 拉进来。本副本只 import 随包携带的运行时取数脚本（tax_detail／
-tax_so360／tax_shui5／tax_wechat），不 import tax_server，所以 CLI、API、
+tax_sogou／tax_shui5／tax_wechat），不 import tax_server，所以 CLI、API、
 MCP 都拿得到全文与官方解读，又都不依赖 Flask。
 
 本文件是逐项目副本：CLI、API、MCP 各自带一份，三份内容要求逐字节相同，
-由各自的测试用 SHA-256 校验。缓存是本进程内的字典，三个进程各存各的。
+由各自的测试用 SHA-256 校验。全文段落缓存是本进程内的字典；解读复用取数层缓存。
 
 本模块只做取数与解析，不生成解读、不调用外部模型。
 """
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
-from datetime import date
 
+import tax_http
 from tax_detail import download_bytes, _parse_docx_from_bytes
-from tax_so360 import so360_search
+from tax_sogou import sogou_search
 from tax_shui5 import search_shui5
 from tax_wechat import search_wechat
 
 
 _text_cache = {}
-_interp_cache = {}
 
 # ── Content filter: domains/keywords that indicate non-tax garbage results ──
 _BLOCKED_DOMAINS = [
@@ -80,26 +78,8 @@ PRACTICE_DOMAIN_KEYWORDS = [
 
 # ── Interpretation Search Engine ─────────────────────────────────────────
 
-def _date_from_url(url: str) -> str:
-    """从 URL 里的日期目录里取发布日期，取不到就返回空串。
-
-    常见形态是 /201904/t20220313_xxx.html 或 /201904/816904caec....shtml。
-    后者那串 32 位哈希紧跟在年份后面，直接正则抓 8 位数字会拼出 "2019-04-81"
-    这种不存在的日期，所以抓到之后要按真实日历校验一遍。
-    """
-    m = re.search(r"(\d{4})[-/]?(\d{2})[-/]?(\d{2})", url)
-    if not m:
-        return ""
-    y, mo, d = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
-    try:
-        date(y, mo, d)
-    except ValueError:
-        return ""
-    return f"{y:04d}-{mo:02d}-{d:02d}"
-
-
 def _search_one_source(site: str, query: str, n: int = 5) -> tuple[list, str]:
-    """Search a specific site for policy interpretations, via 360 site: search.
+    """Search a specific site for policy interpretations, via Sogou site: search.
 
     返回 (结果, 拦截说明)。说明非空表示这一路根本没取到数据，调用方不能把
     0 条当成"该站点没有解读"。
@@ -108,7 +88,7 @@ def _search_one_source(site: str, query: str, n: int = 5) -> tuple[list, str]:
     cn/m.bing.com 虽偶发返回 10 个 <li class="b_algo">，但内容与查询无关
     （查 chinatax.gov.cn 企业所得税法 返回"元气壁纸"），属于不可信降级。
     """
-    found = so360_search(query, site=site, size=n)
+    found = sogou_search(query, site=site, size=n)
     if found.get("_error"):
         return [], found["_error"]
 
@@ -120,7 +100,7 @@ def _search_one_source(site: str, query: str, n: int = 5) -> tuple[list, str]:
         results.append({
             "title": title,
             "url": item["url"],
-            "date": _date_from_url(item.get("url", "")),
+            "date": item.get("date", ""),
             "source": site,
             "source_label": _source_label(site),
             "snippet": item.get("snippet", ""),
@@ -214,48 +194,39 @@ def search_interpretations(law_title: str, keyword: str = "",
                            province: str = "") -> dict:
     """Search **official** policy interpretations ONLY from .gov.cn sources.
     Practice/public-account/web results belong in /api/web-related, NOT here."""
-    cache_key = f"{law_title}|{keyword}|{'-'.join(sources or [])}|{province}"
-    if cache_key in _interp_cache:
-        return _interp_cache[cache_key]
-
     if sources is None:
         if province:
             sources = [f"{province}.chinatax.gov.cn", "chinatax.gov.cn", "www.gov.cn"]
         else:
-            sources = ["chinatax.gov.cn", "fgk.chinatax.gov.cn", "mof.gov.cn", "www.gov.cn"]
+            sources = ["chinatax.gov.cn", "mof.gov.cn", "www.gov.cn"]
+    sources = list(dict.fromkeys(sources))
 
     title_short = law_title.replace("中华人民共和国", "").strip()
 
-    # 只搜官方站点的解读：每站两条问法，避免 4 站 × 4 问 = 16 次请求
-    official_queries = [
-        f"{title_short} 政策解读",
-        f"{keyword} 官方解读" if keyword and keyword != law_title else f"{title_short} 解读",
-    ]
+    base_query = f"{title_short} 政策解读"
+    alt_query = (f"{keyword} 官方解读" if keyword and keyword != law_title
+                 else f"{title_short} 解读")
+    search_plan = []
+    for i, site in enumerate(sources):
+        q_text = alt_query if i == 0 and alt_query != base_query else base_query
+        search_plan.append((site, q_text))
 
     all_results = []
     seen_urls = set()
     blocked = []
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = {}
-        for site in sources:
-            for q_text in official_queries[:3]:
-                futures[(site, q_text)] = pool.submit(
-                    _search_one_source, site, q_text, 4
-                )
-
-        for (site, q_text), future in futures.items():
-            try:
-                items, why = future.result(timeout=15)
-                if why:
-                    blocked.append(why)
-                for item in items:
-                    if isinstance(item, dict) and item.get("url"):
-                        if item["url"] not in seen_urls:
-                            seen_urls.add(item["url"])
-                            all_results.append(item)
-            except Exception:
-                pass
+    for site, q_text in search_plan:
+        try:
+            items, why = _search_one_source(site, q_text, 100)
+            if why:
+                blocked.append(why)
+            for item in items:
+                if isinstance(item, dict) and item.get("url"):
+                    if item["url"] not in seen_urls:
+                        seen_urls.add(item["url"])
+                        all_results.append(item)
+        except Exception as exc:
+            blocked.append(f"{site}: {tax_http.short_reason(exc)}")
 
     result = {
         "law_title": law_title,
@@ -264,15 +235,9 @@ def search_interpretations(law_title: str, keyword: str = "",
         "sources": all_results[:15],
         "searched_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
-    # 一条站点都没取到时必须说清是"被拦"还是"确实没有"：前端空态文案
-    # "该法规可能暂无公开的政策解读文件"只有在搜索引擎正常工作时才成立。
-    # 被拦的这种结果不进缓存，否则限流恢复后仍会一直回空。
-    if not all_results and blocked:
-        result["engine_error"] = blocked[0]
-        result["queries_blocked"] = f"{len(blocked)}/{len(futures)}"
-        return result
-
-    _interp_cache[cache_key] = result
+    if blocked:
+        result["engine_error"] = "; ".join(dict.fromkeys(blocked))
+        result["queries_blocked"] = f"{len(blocked)}/{len(search_plan)}"
     return result
 
 

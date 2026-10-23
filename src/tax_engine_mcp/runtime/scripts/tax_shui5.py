@@ -7,14 +7,16 @@ NPC 法规库里查不到的实操层内容，是四源之外的必要补充。
 
 税屋访问的两道门槛及本模块的处理：
   1. 检索：两条通道，覆盖的是两种排序，不是彼此的备份。
-     - 360 的 site:shui5.cn（`tax_so360`）：不要凭据、不启浏览器，每行只有
-       标题＋链接＋摘要，没有日期。
+     - 搜狗的 site:shui5.cn（`tax_sogou`）：不要凭据、不启浏览器，每行带
+       标题、链接、摘要与发布日期；没有所属栏目与总条数，栏目/区间/匹配域
+       也不能下推。
      - 站内原生检索（帝国 CMS 的 `POST /e/search/index.php`）：每行带日期、
        摘要与所属栏目，页面还给总条数，还能把栏目、发布区间、匹配域三项下推到
        服务端（边界见 search_native），但要先过一次 WAF（约 6 秒）。
-     默认 auto：先走 360，它被拦或 0 条时才换站内，避免每次检索都启浏览器；
-     给了栏目/区间/匹配域/取全时 auto 直接换站内，因为 360 那一路没有这些维度。
-     2026-10-18 实测同一个词「研发费用加计扣除」两路首屏按文章 ID 归一后交集 0 条。
+     默认 auto：先走搜狗，它被拦或 0 条时才换站内，避免每次检索都启浏览器；
+     给了栏目/区间/匹配域/取全时 auto 直接换站内，因为搜狗那一路没有这些维度。
+     2026-10-23 实测同一个词「研发费用加计扣除」站内首屏 30 篇、搜狗首屏 8 篇，
+     按文章 ID 归一后交集 2 篇。
      注：首页可见的搜索框提交到 zhannei.baidu.com/cse/site，那是百度站点搜索，
      本机 IP 上极不稳定（实测 4 次仅 1 次返回结果），不作为通道。
   2. 阅读：税屋前置阿里云 WAF，无放行 cookie 时所有页面（含 robots.txt、
@@ -81,7 +83,7 @@ import urllib3
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from tax_so360 import so360_search
+from tax_sogou import sogou_search
 from tax_terms import doc_numbers
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -89,7 +91,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 SHUI5_SITE = "shui5.cn"
 SHUI5_BASE = "https://www.shui5.cn/"
 JINA_READER = "https://r.jina.ai/"
-# 一次检索后逐篇取正文，360/搜狗/税屋都对高频请求敏感
+# 一次检索后逐篇取正文，搜狗与税屋都对高频请求敏感
 READ_INTERVAL = 2.0
 TIMEOUT_READ = 30
 
@@ -505,8 +507,10 @@ def search_native(keyword: str, size: int = 5, session: requests.Session | None 
                   fetch_all: bool = False) -> dict:
     """站内原生检索：POST 检索表单 → 302 落点 → 按 page 从 0 起翻页。
 
-    这一路要一份放行 cookie（约 6 秒过一次 WAF），换来的是 360 给不出的三件事：
-    每行带日期、带所属栏目，页面还给这一词的总条数（形如「420条关于 留抵退税 的搜索结果」）。
+    这一路要一份放行 cookie（约 6 秒过一次 WAF），换来的是搜狗那一路给不出的
+    三件事：每行带所属栏目、页面给这一词的总条数（形如「420条关于 留抵退税 的
+    搜索结果」）、栏目/发布日期区间/匹配域三项能下推到服务端。日期搜狗也给，
+    不是这一路独有的。
 
     限定一律下推到服务端。三个过滤维度（栏目、发布日期区间、匹配域）的实测边界
     （2026-10-18，逐项读数记在 `subskills/shui5/NOTE.md`）：
@@ -663,14 +667,15 @@ def search_shui5(keyword: str, size: int = 5, read_body: bool = False,
         keyword: 检索词
         size: 返回条数上限
         read_body: True 时再逐篇取正文（较慢，每篇之间等 READ_INTERVAL）
-        channel: "auto"（默认）先走 360，它被拦或 0 条时才换站内原生检索；
-                 "so360" 只走 360（不要凭据、不启浏览器）；
+        channel: "auto"（默认）先走搜狗，它被拦或 0 条时才换站内原生检索；
+                 "sogou" 只走搜狗（不要凭据、不启浏览器）；
                  "native" 只走站内（每行带日期与栏目，但要过一次 WAF）。
-                 带限定参数时 auto 直接换成 native，_channels 里会写明这一轮没问过 360。
-                 两条通道覆盖的是不同排序：2026-10-18 实测同一个词首屏交集 0 条，
-                 所以"这一路 0 条"不能读成"另一路也是 0 条"。
+                 带限定参数时 auto 直接换成 native，_channels 里会写明这一轮没问过搜狗。
+                 两条通道覆盖的是不同排序：2026-10-23 实测同一个词站内首屏 30 篇、
+                 搜狗首屏 8 篇，按文章 ID 归一后交集 2 篇，所以"这一路 0 条"不能
+                 读成"另一路也是 0 条"。
         column: 栏目限定（classid、目录名、导航名或首页短标签，多个用逗号）。
-                给了它就只走站内那一路——360 的 site: 检索没有栏目、时间与匹配域这些维度。
+                给了它就只走站内那一路——搜狗的 site: 检索没有栏目、时间与匹配域这些维度。
         date_from / date_to: 发布日期区间，走站内那一路；只有 date_from 时起不到限定作用，
                 缺口写在结果的 _filter_note 里。
         match: "broad"（默认）或 "title"（只在标题里匹配），走站内那一路。
@@ -684,36 +689,42 @@ def search_shui5(keyword: str, size: int = 5, read_body: bool = False,
         read_body=True 时额外含 content 与 pages；正文开头带「税屋提示——」批注的
         那一篇另有 repeal_note。
         _channels 逐条写明这一轮每条通道走到哪一步——上层据此归因，
-        不必再猜"税屋 0 条"是税屋空的还是 360 连带的。
+        不必再猜"税屋 0 条"是税屋空的还是搜狗连带的。
     """
     scoped = bool(column or date_from or date_to or match != "broad" or fetch_all)
     results: list = []
     used = ""
     note = ""
-    channels = {"360": "未走（指定通道）", "站内": "未走（指定通道）"}
+    searched_at = time.strftime("%Y-%m-%d %H:%M:%S")
+    from_cache = False
+    channels = {"搜狗": "未走（指定通道）", "站内": "未走（指定通道）"}
     if scoped and channel == "auto":
-        # 换路是限定参数逼的，不是 360 连带的：这句要写清楚，否则读者以为
-        # "360 也没命中"，其实这一轮压根没问过它。
+        # 换路是限定参数逼的，不是搜狗连带的：这句要写清楚，否则读者以为
+        # "搜狗也没命中"，其实这一轮压根没问过它。
         channel = "native"
-        channels["360"] = ("没问：这一轮要栏目/时间/匹配域/取全，"
-                           "这些维度只有站内那一路有")
-    elif scoped and channel == "so360":
-        # 指定了 360 又给了限定参数：360 那一路照跑，但限定加不上，只能报缺口
-        note = ("这一轮给了栏目/时间/匹配域/取全这类限定，但通道指定成 so360："
+        channels["搜狗"] = ("没问：这一轮要栏目/时间/匹配域/取全，"
+                            "这些维度只有站内那一路有")
+    elif scoped and channel == "sogou":
+        # 指定了搜狗又给了限定参数：搜狗那一路照跑，但限定加不上，只能报缺口
+        note = ("这一轮给了栏目/时间/匹配域/取全这类限定，但通道指定成 sogou："
                 "这些维度只有站内那一路有，限定没加上")
 
-    if channel in ("auto", "so360"):
-        found = so360_search(keyword, site=SHUI5_SITE, size=size)
+    if channel in ("auto", "sogou"):
+        found = sogou_search(keyword, site=SHUI5_SITE, size=size)
         if found.get("_error"):
-            channels["360"] = f"被拦：{found['_error']}"
+            status = "被拦" if found.get("_blocked") else "没走成"
+            channels["搜狗"] = f"{status}：{found['_error']}"
         else:
             for item in found["results"]:
                 results.append(_row_dict(
                     title=_strip_site_suffix(item["title"]) or item["title"],
-                    url=item["url"], date="",
+                    url=item["url"], date=item.get("date", ""),
                     snippet=item.get("snippet", "")))
-            channels["360"] = f"命中 {len(results)} 条" if results else "0 条"
-        used = "360" if results else ""
+            channels["搜狗"] = f"命中 {len(results)} 条" if results else "0 条"
+        used = "搜狗" if results else ""
+        if results:
+            searched_at = found.get("searched_at", searched_at)
+            from_cache = bool(found.get("_from_cache"))
 
     nat = None
     if channel == "auto" and not results:
@@ -759,11 +770,11 @@ def search_shui5(keyword: str, size: int = 5, read_body: bool = False,
         "keyword": keyword,
         "total": len(results),
         "results": results,
-        "searched_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "searched_at": searched_at,
         "source": "税屋 (shui5.cn)",
         "_channel": used,
         "_channels": channels,
-        "_from_cache": False,
+        "_from_cache": from_cache,
     }
     if err:
         out["_error"] = err
@@ -1183,14 +1194,15 @@ def read_article(url: str) -> tuple[str, str]:
 def _strip_site_suffix(title: str) -> str:
     """去掉标题里的税屋站点后缀。
 
-    360 与 Jina 给的标题都带同一句站点标语，但"税 屋"两字之间空白不一致，
-    且 360 版本会掉字（实测 "税屋——" 变成 " 屋 "），所以先按标语正文切，
-    再清掉残留的站名字符。
+    搜狗与 Jina 给的标题都带同一句站点标语；搜狗还会把整条标题截断，
+    截断点落在标语中间（实测 "..._税屋——第一时间传递财..."），所以不能只按
+    完整的标语正文切。先切截断形态的 "_税屋——"，再按完整标语与结尾站名兜底。
     """
     if not title:
         return ""
-    # 先按标语正文切掉后半段，再剥掉站名及其两侧连接符
     head = re.split(r"第一时间传递财税政策法规", title)[0]
+    # 截断形态：下划线/分隔符 + 税屋 + 至少一枚破折号，后面有没有正文都算后缀
+    head = re.split(r"[_|!！·、]*\s*[-—]{0,2}\s*税\s*屋\s*[-—]+", head)[0]
     head = re.split(r"[_|!！·、]*\s*[-—]{0,2}\s*税\s*屋\s*[-—]{0,2}\s*$", head)[0]
     head = re.split(r"[_|!！·、]*\s*[-—]{0,2}\s*屋\s*$", head)[0]
     return head.strip(" _-—!！|·、") or title.strip()
@@ -1231,8 +1243,8 @@ def main():
                    help="返回条数上限，默认 5；--find-doc 那一档默认 20，"
                         "因为同一枚文号的候选常常不止五条")
     p.add_argument("--read", action="store_true", help="同时取回正文（较慢）")
-    p.add_argument("--channel", choices=["auto", "so360", "native"], default="auto",
-                   help="auto=先 360、被拦或 0 条时换站内；so360=只走 360；"
+    p.add_argument("--channel", choices=["auto", "sogou", "native"], default="auto",
+                   help="auto=先搜狗、被拦或 0 条时换站内；sogou=只走搜狗；"
                         "native=只走站内原生检索（要过一次 WAF，每行带日期与栏目）。"
                         "带 --column/--from/--to/--match title/--all 时这一路只能是站内")
     p.add_argument("--column", help="检索时限定栏目：目录名、导航名或 classid，"

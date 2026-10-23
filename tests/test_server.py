@@ -436,8 +436,16 @@ def test_runtime_snapshot_matches_manifest():
 
     少一个脚本、改一个字节都在这里报红，而不是等某个取数分支到运行时才炸。
     """
+    import re
+
     runtime = engine.ENGINE_ROOT
+    project = Path(__file__).resolve().parents[1]
+    version = re.search(r'^version = "([^"]+)"',
+                        (project / "pyproject.toml").read_text(encoding="utf-8"), re.M)[1]
+    assert sys.modules[engine.__package__].__version__ == version
+    assert server.mcp.version == version
     manifest = json.loads((runtime / "MANIFEST.json").read_text(encoding="utf-8"))
+    assert manifest["engine_version"] == "3.60.1"
     listed = manifest["files"]
     actual = {
         path.relative_to(runtime).as_posix()
@@ -466,6 +474,202 @@ def test_no_external_engine_lookup():
     assert offenders == []
 
 
+def test_official_interpretations_query_plan_offline(monkeypatch):
+    tax_doc = engine.tax_service.tax_doc
+    calls = []
+
+    def fake_source(site, query, n):
+        calls.append((site, query, n))
+        return [{"url": f"https://{site}/interpretation"}], ""
+
+    monkeypatch.setattr(tax_doc, "_search_one_source", fake_source)
+    result = tax_doc.search_interpretations("中华人民共和国增值税法", "增值税")
+    expected = [
+        ("chinatax.gov.cn", "增值税 官方解读", 100),
+        ("mof.gov.cn", "增值税法 政策解读", 100),
+        ("www.gov.cn", "增值税法 政策解读", 100),
+    ]
+    assert sorted(calls) == sorted(expected)
+    assert [item["url"] for item in result["sources"]] == [
+        f"https://{site}/interpretation" for site, _, _ in expected
+    ]
+
+    calls.clear()
+    result = tax_doc.search_interpretations("增值税法", sources=[
+        "chinatax.gov.cn", "chinatax.gov.cn", "fgk.chinatax.gov.cn",
+        "shanghai.chinatax.gov.cn", "fgk.chinatax.gov.cn", "www.gov.cn",
+    ])
+    expected = [
+        ("chinatax.gov.cn", "增值税法 解读", 100),
+        ("fgk.chinatax.gov.cn", "增值税法 政策解读", 100),
+        ("shanghai.chinatax.gov.cn", "增值税法 政策解读", 100),
+        ("www.gov.cn", "增值税法 政策解读", 100),
+    ]
+    assert sorted(calls) == sorted(expected)
+    assert [item["url"] for item in result["sources"]] == [
+        f"https://{site}/interpretation" for site, _, _ in expected
+    ]
+
+    answer = sys.modules["tax_answer"]
+    sogou = sys.modules[tax_doc.sogou_search.__module__]
+    draft_calls = []
+
+    def draft_search(query, *, site, size):
+        draft_calls.append((query, site, size))
+        return {"results": []}
+
+    monkeypatch.setattr(sogou, "sogou_search", draft_search)
+    assert answer._legis_round("离线草案", 5) == ([], "")
+    assert draft_calls == [("离线草案", "npc.gov.cn", 5)]
+    monkeypatch.setattr(answer, "build_plan", lambda question: {
+        "type": {"type": "default"},
+        "rounds": [{"round": 1, "goal": "草案", "sources": ["legis"],
+                    "term_key": "legis"}],
+    })
+    monkeypatch.setattr(answer, "search_terms", lambda question: {"legis": "离线草案"})
+    gathered = answer.gather("离线草案", read_body=False, max_per_round=2,
+                             check_citations=False)
+    assert gathered["errors"] == []
+    assert draft_calls == [("离线草案", "npc.gov.cn", 5),
+                           ("离线草案", "npc.gov.cn", 2)]
+
+
+def test_sogou_mobile_full_page_cache_offline(monkeypatch, tmp_path):
+    from urllib.parse import quote
+
+    tax_doc = engine.tax_service.tax_doc
+    tax_sogou = sys.modules[tax_doc.sogou_search.__module__]
+    tax_cache = sys.modules["tax_cache"]
+    for module in (tax_sogou, tax_cache):
+        assert Path(module.__file__).is_relative_to(engine.ENGINE_ROOT / "scripts")
+
+    cache = tax_cache.CacheManager(enabled=True, namespace="sogou")
+    cache.dir = tmp_path
+    monkeypatch.setattr(tax_sogou, "_cache", cache)
+    snippet = "增值税政策解读摘要完整保留。" * 30
+    assert len(snippet) > 200
+    urls = [f"https://chinatax.gov.cn/interpretation-{i}.html" for i in range(12)]
+    html = "<html><body>" + "".join(
+        f'<div class="vrResult"><h3><a class="resultLink" '
+        f'href="https://m.sogou.com/web?url={quote(url, safe="")}">'
+        f'增值税政策<em>解读</em>{i}</a></h3>'
+        '<div class="citeurl"><span>chinatax.gov.cn</span> '
+        '<span class="date">1995-01-27</span></div>'
+        f'<div class="txt-summary">{snippet}</div></div>'
+        for i, url in enumerate(urls)
+    ) + "</body></html>"
+    calls = []
+
+    def fake_fetch(query):
+        calls.append(query)
+        return html, "https://m.sogou.com/web", "", False
+
+    monkeypatch.setattr(tax_sogou, "_fetch", fake_fetch)
+    for size, count, from_cache in ((1, 1, False), (5, 5, True), (100, 12, True)):
+        result = tax_doc.sogou_search("增值税政策解读", site="chinatax.gov.cn", size=size)
+        assert not result.get("_error"), result
+        assert len(result["results"]) == count
+        assert result["_from_cache"] is from_cache
+        assert [item["url"] for item in result["results"]] == urls[:count]
+        for i, item in enumerate(result["results"]):
+            assert item["title"] == f"增值税政策解读{i}"
+            assert item["snippet"] == snippet
+            assert item["date"] == "1995-01-27"
+    assert calls == ["site:chinatax.gov.cn 增值税政策解读"]
+    assert cache.stats()["entries"] == 1
+
+
+def test_interpretations_cache_expiry_and_retry_boundaries_offline(monkeypatch, tmp_path):
+    import threading
+    import time
+    from unittest.mock import patch
+
+    tax_doc = engine.tax_service.tax_doc
+    tax_sogou = sys.modules[tax_doc.sogou_search.__module__]
+    cache = sys.modules["tax_cache"].CacheManager(enabled=True, namespace="sogou")
+    cache.dir = tmp_path
+    monkeypatch.setattr(tax_sogou, "_cache", cache)
+    clock = [time.time()]
+    monkeypatch.setattr(time, "time", lambda: clock[0])
+    calls = []
+    caller = threading.get_ident()
+
+    def fetch(query):
+        assert threading.get_ident() == caller
+        calls.append(query)
+        html = ('<div class=vrResult><h3><a class=resultLink '
+                'href="/tc?url=https%3A%2F%2Fchinatax.gov.cn%2Farticle.html">'
+                f'增值税法官方解读第{len(calls)}版</a></h3></div>')
+        return html, "", "", False
+
+    with patch.object(tax_sogou, "_fetch", fetch):
+        first = tax_doc.search_interpretations("过期验证", sources=["chinatax.gov.cn"])
+        clock[0] += tax_sogou.CACHE_TTL - 1
+        cached = tax_doc.search_interpretations("过期验证", sources=["chinatax.gov.cn"])
+        assert len(calls) == 1 and first["sources"] == cached["sources"]
+        clock[0] += 2
+        refreshed = tax_doc.search_interpretations("过期验证", sources=["chinatax.gov.cn"])
+        assert len(calls) == 2
+        assert refreshed["sources"][0]["title"] == "增值税法官方解读第2版"
+
+    for status, count in ((400, 1), (404, 1), (503, 2)):
+        response = type("R", (), {"status_code": status, "url": "",
+                                 "headers": {}, "content": b""})()
+        with patch.object(tax_sogou, "_get", return_value=response) as hit, \
+                patch.object(time, "sleep") as wait:
+            _, _, error, blocked = tax_sogou._fetch("离线验证")
+        assert hit.call_count == count and wait.call_count == count - 1
+        assert f"HTTP {status}" in error and not blocked
+
+
+def test_interpretations_partial_failure_and_missing_date_offline(monkeypatch):
+    tax_doc = engine.tax_service.tax_doc
+    calls = []
+    success = {"title": "增值税政策官方解读", "url": "https://chinatax.gov.cn/interpretation"}
+    returned_error = "合成反爬拦截"
+    raised_reason = "合成上游异常"
+
+    def fake_source(site, query, n):
+        calls.append((site, query, n))
+        if site == "chinatax.gov.cn":
+            return [success], ""
+        if site == "mof.gov.cn":
+            return [], returned_error
+        assert site == "www.gov.cn"
+        raise RuntimeError(raised_reason)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(tax_doc, "_search_one_source", fake_source)
+        for _ in range(2):
+            result = tax_doc.search_interpretations("增值税法")
+            assert result["queries_blocked"] == "2/3"
+            assert returned_error in result["engine_error"]
+            assert raised_reason in result["engine_error"]
+            assert "RuntimeError" in result["engine_error"]
+            assert result["sources"] == [success]
+            assert result["total"] == 1
+    expected = [
+        ("chinatax.gov.cn", "增值税法 解读", 100),
+        ("mof.gov.cn", "增值税法 政策解读", 100),
+        ("www.gov.cn", "增值税法 政策解读", 100),
+    ]
+    assert sorted(calls) == sorted(expected * 2)
+
+    url = "https://chinatax.gov.cn/20240101/interpretation.html"
+
+    def fake_sogou(query, *, site, size):
+        assert (query, site, size) == ("增值税法 解读", "chinatax.gov.cn", 100)
+        return {"results": [{"title": "增值税政策官方解读", "url": url,
+                             "date": "", "snippet": "合成摘要"}]}
+
+    monkeypatch.setattr(tax_doc, "sogou_search", fake_sogou)
+    items, error = tax_doc._search_one_source("chinatax.gov.cn", "增值税法 解读", 100)
+    assert error == ""
+    assert len(items) == 1
+    assert items[0]["url"] == url
+    assert items[0]["date"] == ""
+
+
 def test_vendored_copies_match_fingerprint():
     """三个项目各带一份副本，指纹相同才算同一份。
 
@@ -475,8 +679,8 @@ def test_vendored_copies_match_fingerprint():
     import hashlib
 
     pins = {
-        "tax_service": "aa156a7db79d44a706c4fba9561b27ba7e71fedcfadd717976b54bdf5cb0fde9",
-        "tax_doc": "4ae92d52346fddb1b660b85836a7d8d7cadde5961025369535d262519cff35a0",
+        "tax_service": "adf63b15c32df4637d6fe730835e1eb4524e28afe8484c95111557d33a531b42",
+        "tax_doc": "01f66bf24739285cf42cc72a2d7ec0cdff9f89e29e896db38365ae9e3176738f",
     }
     got = {
         "tax_service": hashlib.sha256(

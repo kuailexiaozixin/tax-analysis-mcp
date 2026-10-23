@@ -40,7 +40,7 @@ import tax_evidence as E
 import tax_fgk as FGK
 import tax_search as T
 import tax_shui5 as S5
-import tax_so360 as S360
+import tax_sogou as SG
 import tax_terms as TT
 import tax_web_search as W
 import tax_wechat as WX
@@ -166,7 +166,7 @@ def _retarget_for_legislation(rounds: list) -> None:
         # search_wechat 同名次全是"修订草案解读"。只查人大网等于漏掉这一层。
         "sources": ["legis", "shui5", "wechat"],
         "term_key": "legis",
-        "call": "so360_search(草案词, site='npc.gov.cn') + "
+        "call": "sogou_search(草案词, site='npc.gov.cn') + "
                 "search_shui5 / search_wechat(同一草案词)",
     })
 
@@ -304,7 +304,7 @@ def _legis_round(term: str, size: int) -> tuple[list, str]:
     `legislative_process`（它不是已公布的条文）：前者进 `caveats` 变成一句
     提醒，后者让 `tax_evidence.pick_primary` 不把它挑成主依据。
     """
-    rows, err = _rows_and_error(S360.so360_search(term, site=LEGISLATION_SITE,
+    rows, err = _rows_and_error(SG.sogou_search(term, site=LEGISLATION_SITE,
                                                  size=size))
     for row in rows:
         row["_reliability"] = "medium"
@@ -346,7 +346,7 @@ def search_terms(question: str) -> dict:
     parent = info.get("parent_law", "")
     # 总局专题的检索词不是分类名，"税收争议救济"这类名号搜不到东西
     sta_term = info.get("search_term") or topic
-    # 解读源用匹配上的别名当短词：把整句事实丢进 360 搜是搜不出实务文章的，
+    # 解读源用匹配上的别名当短词：把整句事实丢进 搜狗 搜是搜不出实务文章的，
     # 命中的别名（加计扣除、小规模）才是税屋文章标题里真会用到的词。
     alias = info.get("matched_alias") or ""
     short = _strip_question_tail(question)
@@ -527,7 +527,7 @@ def _is_practice_row(row: dict) -> bool:
     """认这一条是不是实务材料那一路，判据直接用定级层的同一个常量。
 
     条目上带的不是 "shui5" 这种源键，而是给人看的标签——`tax_shui5` 写
-    "税屋 (shui5.cn)"、`tax_wechat` 写"微信公众号"，360 回填的那批又是纯域名。
+    "税屋 (shui5.cn)"、`tax_wechat` 写"微信公众号"，搜狗 回填的那批又是纯域名。
     自己在这里列一组源键，列错时这个函数会一条都不认，核对静默变成空转，
     输出上看不出任何异常；共用 `tax_evidence.PRACTICE_SOURCES` 就不会出现
     "核对层认为不是实务、定级层认为是"这种两说的情形。

@@ -132,12 +132,13 @@ LIMITATIONS = (
 )
 
 #: 税屋那一路默认不发时的说明。它不是可选的质量增强，而是覆盖面的另一半：
-#: 判决与复议文书的全文在这一层有转载，而这一层的入口是 360 的 site: 检索，
-#: 360 被本机 IP 限的时候整路是空的（成因与表现见本文件所属台账的
-#: `references/source_defects.md`「由代码保证的源缺陷」360 那一行）。
+#: 判决与复议文书的全文在这一层有转载，而这一层先走搜狗的 site: 检索，
+#: 被反爬时换站内原生检索（站内也要过一次 WAF）；两条都没走通时这一路是空的
+#: （成因与表现见本文件所属台账的
+#: `references/source_defects.md`「由代码保证的源缺陷」搜狗那一行）。
 SHUI5_OFF_NOTE = ("本轮没发税屋那一路（默认不发；要判决／复议文书的转载全文时加 "
-                  "--shui5）。它是 360 的 site:shui5.cn 检索，"
-                  "360 被限时这一路直接空，不等于这一层没有材料。")
+                  "--shui5）。它先走搜狗的 site:shui5.cn 检索，被反爬时换站内原生检索"
+                  "（要过一次 WAF）；两条都没走通时这一路为空，不等于这一层没有材料。")
 
 
 # ── 检索式构造（纯函数，不联网）────────────────────────────────
@@ -448,7 +449,8 @@ def collect(topic: str, elements=(), mode: str = "exhaustive",
         "candidate_count": len(kept),
         "excluded": dropped,
         "sources": (["chinatax.gov.cn search5（column=5741，label 空）"]
-                    + (["shui5.cn 经 360 的 site: 检索取得"] if shui5_fetch else [])),
+                    + (["shui5.cn 检索取得（搜狗 site: 优先，被反爬时换站内）"]
+                       if shui5_fetch else [])),
         "case_support": "有" if kept else "无",
         "limitations": (list(LIMITATIONS)
                         + ([] if shui5_fetch else [SHUI5_OFF_NOTE])),
@@ -521,7 +523,7 @@ def main(argv=None):
             return 2
     shui5_fetch = None
     if args.shui5:
-        # 用到才导：税屋那一路要拉 requests 与 so360，默认不发时不必为它付导入成本
+        # 用到才导：税屋那一路要拉 requests 与搜狗，默认不发时不必为它付导入成本
         from tax_shui5 import search_shui5
         shui5_fetch = lambda w: search_shui5(w, size=5)
     try:

@@ -26,7 +26,7 @@ verify 为什么是必填参数
 
 不进这一层的模块
 ----------------
-tax_shui5 / tax_so360 / tax_wechat / tax_web_search 各自维护 requests.Session
+tax_shui5 / tax_sogou / tax_wechat / tax_web_search 各自维护 requests.Session
 （WAF 挑战应对、cookie 恢复、页面二次跳转），请求形状与这里不同。
 强行合并只会把它们的特例塞进通用层，所以它们保持自管。
 
@@ -87,7 +87,7 @@ class SerialGate:
     site = "该站"
 
     def __init__(self, path: Path = None, timeout: float = 180.0):
-        self.path = Path(path) if path else Path(tempfile.gettempdir()) / "tax-analysis.lock"
+        self.path = Path(path) if path else Path(tempfile.gettempdir()) / "tax-analysis-http.lock"
         self.timeout = float(timeout)
         self._fh = None
         self._thread_lock = threading.Lock()

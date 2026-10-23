@@ -87,9 +87,9 @@ RANK_LABEL = {
 PRACTICE_RANKS = ("technical", "interpretation")
 
 # 指向实务材料来源的标记。这里用子串而不是全等：各源写进 `source` 的是给人看的
-# 标签（"税屋 (shui5.cn)""微信公众号 (搜狗微信)"），而 360 那一路回填的是纯域名
-# （`tax_so360._domain_of` 的返回值，如 "shui5.cn"）。写成全等
-# `source in ("shui5.cn", "mp.weixin.qq.com")` 只能命中 360 回填的那批，
+# 标签（"税屋 (shui5.cn)""微信公众号 (搜狗微信)"），而搜狗那一路回填的是纯域名
+# （`tax_sogou._domain_of` 的返回值，如 "shui5.cn"）。写成全等
+# `source in ("shui5.cn", "mp.weixin.qq.com")` 只能命中搜狗回填的那批，
 # 税屋与公众号自己发回来的条目一条都不认，实务层因此被按标题形态漏判成"未定性"。
 PRACTICE_SOURCES = ("shui5.cn", "mp.weixin.qq.com", "weixin.sogou.com",
                     "税屋", "微信公众号", "搜狗微信")

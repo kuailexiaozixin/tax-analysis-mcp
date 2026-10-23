@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""法规的实务相关网页：税屋、微信公众号与 360 全网三路合并。
+"""法规的实务相关网页：税屋、微信公众号与搜狗全网三路合并。
 
 Flask 的 /api/web-related/<bbbs_id> 与三个适配器的 web_related 共用这一份
 组合逻辑。此前它长在 tax_server.py 里，适配器要用就得再抄一遍；两处各判一次
@@ -8,9 +8,9 @@ Flask 的 /api/web-related/<bbbs_id> 与三个适配器的 web_related 共用这
 叫"官方来源"。
 
 三路的边界：
-- 税屋（shui5.cn）与微信公众号走各自的站内检索模块，不经过 360；
-- 全网那一路查 360（m.so.com），Bing 与百度都已移除：前者对 site: 查询回空
-  结果块，后者在本机几乎每次都被打成"百度安全验证"页；
+- 税屋（shui5.cn）与微信公众号走各自的检索模块（税屋：搜狗 site: 与站内原生；
+  公众号：搜狗微信），不经过全网那一路；
+- 全网那一路查搜狗手机入口（m.sogou.com）；Bing、百度与360搜索不作为通道；
 - 官方来源标签只按 URL 判断。chinatax.gov.cn 里含 "tax"，不能拿 "tax" 当
   实务域名的判据，否则官方站点会被误标成实务解读。
 """
@@ -21,7 +21,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from tax_shui5 import search_shui5
-from tax_so360 import so360_search
+from tax_sogou import sogou_search
 from tax_wechat import search_wechat
 
 BLOCKED_DOMAINS = [
@@ -116,14 +116,14 @@ def search_practice_sources(query: str, n: int = 3) -> list[dict]:
 
 
 def search_web_broad(query: str, n: int = 8) -> tuple[list, str]:
-    """360 全网补充；返回 (结果, 拦截说明)。
+    """搜狗全网补充；返回 (结果, 拦截说明)。
 
     说明非空表示这一路根本没取到数据，调用方不能把 0 条当成"网上没有解读"。
     必须带着空说明返回：调用方按二元组解包，返回裸列表时解包会按列表长度
     成败——1 条与 3 条都抛 ValueError 被吞掉，正好 2 条时两个名字各接住一个
     dict，随后 list(dict) 拿到键名。
     """
-    found = so360_search(f"{query} 税收 政策解读", site="", size=n)
+    found = sogou_search(f"{query} 税收 政策解读", site="", size=n)
     if found.get("_error"):
         return [], found["_error"]
 
@@ -138,7 +138,7 @@ def search_web_broad(query: str, n: int = 8) -> tuple[list, str]:
         results.append({
             "title": title,
             "url": href,
-            "date": "",
+            "date": item.get("date", ""),
             "source": domain_label,
             "source_label": "官方来源" if ("chinatax" in href or "gov.cn" in href) else (
                 practice_source_name(domain_label, title) or "实务解读"

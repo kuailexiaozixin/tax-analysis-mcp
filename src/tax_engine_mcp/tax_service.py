@@ -434,7 +434,7 @@ def law_interpretations(title: str, keyword: str = "",
 
 
 def web_related(bbbs_id: str, keyword: str = "") -> dict:
-    """法规的实务相关网页：税屋、公众号与 360 全网。
+    """法规的实务相关网页：税屋、公众号与搜狗全网。
 
     标题从 law_info 取，组合与过滤在 tax_related：Flask 的
     /api/web-related/<bbbs_id> 用的是同一份实现。

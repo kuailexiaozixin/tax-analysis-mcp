@@ -122,14 +122,23 @@ PYTHONPATH=src python -m tax_engine_mcp.server
 | `search_gov_policies` | 税务总局站内或法规库的条目，可按成文日期、时效、税种、文种、年份、文号、效力等级收窄 | 是 |
 | `read_law` | 法规元数据，以及可选的正文字段 `text.paragraphs` | 是 |
 | `find_official_interpretations` | 只来自 `.gov.cn` 的官方解读 | 是 |
-| `find_related_web_pages` | 税屋、微信公众号与 360 全网的实务线索；`engine_error` 非空表示全网那一路没取成 | 是 |
+| `find_related_web_pages` | 税屋、微信公众号与搜狗全网的实务线索；`engine_error` 非空表示全网那一路没取成 | 是 |
 | `gather_tax_evidence` | 计划、逐轮证据、定级结果与缺口；不写成稿 | 是 |
 | `analyze_tax_question` | 分层底稿（主依据、其他法定依据、执行口径与实务认定、待核对线索）；不写最终答复 | 是 |
 
-`search_tax_policies` 的六个来源是 `npc`、`chinatax`、`so360`、`shui5`、
+`search_tax_policies` 的六个来源是 `npc`、`chinatax`、`sogou`、`shui5`、
 `wechat`、`ctax`。多源聚合没有页码维度；要翻页时把 `sources` 限定为
 `["npc"]`。`search_gov_policies` 的 `fgk` 一路没有页码，`body` 只对
 `fgk` 有效。
+
+搜狗网页检索以 `m.sogou.com` 为正常入口，每次只取一页并缓存整页元数据 30 分钟；
+`size` 只限制输出，同词同站换条数复用缓存，不增加请求或保证取满。摘要完整保留，
+日期缺失时留空。官方解读默认向总局、财政部、中国政府网各问一次，不再单独问法规库；
+显式指定法规库或省局仍可使用，父域检索不保证法规库召回。部分失败保留已取回结果，
+另报 `engine_error`、`queries_blocked`。各站有序查询，仅复用取数层的 30 分钟缓存，到期后重查，
+不另存无期限组合结果、不设 15 秒线程等待上限。网络异常与 5xx 有限重试，其他非 200 状态直接报错。
+保留限频与冷却，遇拦截立即返回，
+不等待冷却到期，也不通过代理池或端点轮换绕过限制。
 
 ### 算式、类案与检查件
 
