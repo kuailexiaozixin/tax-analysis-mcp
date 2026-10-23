@@ -52,7 +52,7 @@
       "README.md",
       "tests/test_control.py"
     ],
-    "口径来源": "环节与活动的划分取自 subskills/R&D-Expenses/references/rd-mgmt-methodology.md（研发三套口径的唯一基准）与 subskills/R&D-Expenses/SKILL.md，按检查域代号对齐 data/inspection_domains.json；跨税种的环节（发票与合同、跨境扣缴、口径跟踪）按稽查层的场景铺，不局限研发与高企。"
+    "口径来源": "环节与活动的划分取自 subskills/R&D-Expenses/references/subject-caliber-baseline.md（研发三套口径的唯一基准）与 subskills/R&D-Expenses/SKILL.md，按检查域代号对齐 data/inspection_domains.json；跨税种的环节（发票与合同、跨境扣缴、口径跟踪）按稽查层的场景铺，不局限研发与高企。"
   },
   "控制环节": [
     {
@@ -630,7 +630,7 @@
           "责任岗位": "财务岗编对照表，税务岗核加计口径，财务负责人审差异成因。",
           "频率": "每季度一次；高企申报与汇算清缴各一次专项对照。",
           "输入资料": [
-            "科目级口径基准表（取自 rd-mgmt-methodology 第 4.1 节，唯一基准）",
+            "科目级口径基准表（取自 subject-caliber-baseline，唯一基准）",
             "三套口径的分项归集明细",
             "季度对照表"
           ],

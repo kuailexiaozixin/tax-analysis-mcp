@@ -4,7 +4,7 @@
   "files": {
     "scripts/tax_aggregator.py": "0348fec9159e30017edd67bf9ae821696e58a5e4e2cfbead0b5064bf36e14dec",
     "scripts/tax_analyze.py": "cf421aa054639a0af3d53304f374c6684ceea7dc8663419d6437f2526daea313",
-    "scripts/tax_answer.py": "1fb68567f4e8abae39ddf197687a818b8b5f1021d16d4f1d470dbd82023ab350",
+    "scripts/tax_answer.py": "fb4ad0fa66ef87fb57217714ddfc21d2c2d9c649c66956c8526cfcd66d628fce",
     "scripts/tax_browser.py": "2b2a77ea2bdb90149b1e12a0e5c9c5df527fca537bf772350b6611a4c9946200",
     "scripts/tax_cache.py": "406f87a791551c2a58971f40cc9ff936baa95b0c8d2557eb977666bc00e18855",
     "scripts/tax_calc.py": "3ff148d2c2c5a7340e0c9ad78f26ddfa5f0bb6b22bb80d6981eed80ae963f76a",
@@ -28,11 +28,11 @@
     "scripts/tax_web_search.py": "fbfbee48448c3bb5b7e41d8929de94c2fb16f68ba726b511ebbf27207f3c6854",
     "scripts/tax_wechat.py": "55e4609f2f692ba38430b7cb86d20eb94c54f34a009abfd6c666adfaa7eb1ade",
     "data/contract_intake_template.json": "771e60f68a16cabb4515ffc691207c76e8f206a93ee64e1e1a20f2d98f158edf",
-    "data/control_activities.json": "403ab60fdb193c2af97017d3a7bf7b9f0cd69e997959d89b16c70fdf1463e5e3",
+    "data/control_activities.json": "3eb4d6de730a3c773ad779b56a4222e23c678a9f9605f6bd09df421087bbf3cc",
     "data/ctax_columns.json": "62a546132f46c8295d03fb6b1e77f9d7c7a84defaacd0d06a643dcdedbca2477",
     "data/evidence_requirements.json": "c75157c9103a9e46d084822d8cee88d3b429dec90f9b26620e0ccb6ae7b93221",
-    "data/inspection_domains.json": "b5100569704cf65140a5ff98c12e7d399f02e61acc8d9c5e617103a5abcaaf20",
-    "data/ledger_rules.json": "60c152aa2f112a46dc33d71868ec48c1f7fa998ed4ab6bf7eac31f2fe5649b0d",
+    "data/inspection_domains.json": "dec21ee7eb66b18ea175b3dbf29de17e4edc708ce140301c5fe293b97c2f51f2",
+    "data/ledger_rules.json": "3f537c287e5c4fbd3c769eb111dceb26a52942e0f730eef4d317370d8a632bec",
     "data/shui5_columns.json": "d8c9676854994648b668502dc4e1046c1b4b56fb2323a32a12fc8d9408bd511b",
     "references/output_templates.md": "62ed831e1e6cdc53359770ae50ba94da731560b0a21f659340528e1ee565b204",
     "references/tax_risk_framework.md": "7ddd0305359c391930474b510196781fef862fcb4570219d57cfdbb2b7c24da1"
