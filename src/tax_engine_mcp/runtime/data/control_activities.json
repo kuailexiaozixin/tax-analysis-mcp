@@ -52,7 +52,7 @@
       "README.md",
       "tests/test_control.py"
     ],
-    "口径来源": "环节与活动的划分取自 subskills/rd-deduction-hitech/references/rd-mgmt-methodology.md（研发三套口径的唯一基准）与 audit-response.md，按检查域代号对齐 data/inspection_domains.json；跨税种的环节（发票与合同、跨境扣缴、口径跟踪）按稽查层的场景铺，不局限研发与高企。"
+    "口径来源": "环节与活动的划分取自 subskills/R&D-Expenses/subskills/rd-internal-control/references/rd-mgmt-methodology.md（研发三套口径的唯一基准）与 subskills/R&D-Expenses/subskills/rd-audit-response/SKILL.md，按检查域代号对齐 data/inspection_domains.json；跨税种的环节（发票与合同、跨境扣缴、口径跟踪）按稽查层的场景铺，不局限研发与高企。"
   },
   "控制环节": [
     {

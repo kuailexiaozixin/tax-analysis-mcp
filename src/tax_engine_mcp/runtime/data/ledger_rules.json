@@ -213,7 +213,7 @@
         {
           "名": "研发费科目关键词",
           "检索词": "研发费用 科目 归集 辅助账 允许加计 范围",
-          "law_hint": "研发费用加计扣除的归集范围按现行公告；三套口径（会计／高企认定／加计扣除）的科目级取值以 `subskills/rd-deduction-hitech/references/rd-mgmt-methodology.md` 第 4.1 节为唯一基准，本条只取加计扣除那一列"
+          "law_hint": "研发费用加计扣除的归集范围按现行公告；三套口径（会计／高企认定／加计扣除）的科目级取值以 `subskills/R&D-Expenses/subskills/rd-internal-control/references/rd-mgmt-methodology.md` 第 4.1 节为唯一基准，本条只取加计扣除那一列"
         },
         {
           "名": "加计扣除比例",
@@ -234,7 +234,7 @@
       ],
       "依据": [
         "财政部 税务总局关于研发费用加计扣除比例的公告",
-        "归集范围与科目口径以现行研发费用加计扣除公告为准；三套口径不得互串，见 `subskills/rd-deduction-hitech/references/rd-mgmt-methodology.md` 第 4.1 节"
+        "归集范围与科目口径以现行研发费用加计扣除公告为准；三套口径不得互串，见 `subskills/R&D-Expenses/subskills/rd-internal-control/references/rd-mgmt-methodology.md` 第 4.1 节"
       ]
     },
     {
