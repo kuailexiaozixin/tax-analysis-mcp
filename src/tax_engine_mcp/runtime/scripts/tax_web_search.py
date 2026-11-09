@@ -232,9 +232,11 @@ def search_chinatax(keyword: str, page: int = 1, size: int = 10,
 
     Returns:
         {"keyword","total","results","searched_at","source","_error"?,"_from_cache",
-         "filters"?,"_filter_note"?}
+         "_attempts","filters"?,"_filter_note"?}
         total 是检索命中的总条数（可能远大于 results 长度）；
         total 为 0 时若有 _error，说明是请求失败而非无结果。
+        _attempts 是这一轮发过的每一次请求：`(host, 异常类名或 HTTP 状态码,
+        耗时 ms, 第几次尝试)`，由 `tax_http.attempt` 记账，成本归因看它。
         传了 filters 时把 filters 原样回显；filters 收窄到 0 条且非请求失败时，
         补一句 _filter_note 说明是维度拼窄了还是库里真没有。
     """
@@ -254,19 +256,22 @@ def search_chinatax(keyword: str, page: int = 1, size: int = 10,
     }
     params.update(filters or {})
 
-    try:
-        r = requests.get(SEARCH_URL, params=params, headers=HEADERS,
-                         timeout=TIMEOUT, verify=False)
-    except requests.RequestException as e:
-        return _empty_result(keyword, tax_http.short_reason(e), filters)
-
+    log = tax_http.new_log()
+    # 一次不通与三次不通要分得开：这一路本轮实测过 8 次 SSLError，原先一发就弃，
+    # 上层只能把"瞬时没连上"读成"这轮检索没结果"。重试与留痕都在 tax_http.attempt。
+    r, err, _blocked = tax_http.attempt(
+        lambda: requests.get(SEARCH_URL, params=params, headers=HEADERS,
+                             timeout=TIMEOUT, verify=False),
+        SEARCH_URL, log)
+    if err:
+        return _empty_result(keyword, err, filters, attempts=log)
     if r.status_code != 200:
-        return _empty_result(keyword, f"HTTP {r.status_code}", filters)
+        return _empty_result(keyword, f"HTTP {r.status_code}", filters, attempts=log)
 
     try:
         payload = r.json()
     except ValueError as e:
-        return _empty_result(keyword, f"响应不是 JSON: {e}", filters)
+        return _empty_result(keyword, f"响应不是 JSON: {e}", filters, attempts=log)
 
     block = payload.get("searchResultAll") or {}
     items = block.get("searchTotal") or []
@@ -320,6 +325,7 @@ def search_chinatax(keyword: str, page: int = 1, size: int = 10,
         "searched_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "source": "chinatax.gov.cn",
         "_from_cache": False,
+        "_attempts": log,
     }
     if filters:
         out["filters"] = filters
@@ -392,7 +398,8 @@ def _first_match(pattern: re.Pattern, text: str) -> str:
     return m.group(1) if m else ""
 
 
-def _empty_result(keyword: str, error: str = "", filters: dict = None) -> dict:
+def _empty_result(keyword: str, error: str = "", filters: dict = None,
+                  attempts: list = None) -> dict:
     out = {
         "keyword": keyword,
         "total": 0,
@@ -404,6 +411,8 @@ def _empty_result(keyword: str, error: str = "", filters: dict = None) -> dict:
         # 只有请求真的失败才走这里，用它把"没取到数据"与"翻了没筛出/库里没有"
         # 分开——两者都叫 0 条，但界面该说的不是一句话。见 tax_server 空态分流。
         "_fetch_failed": True,
+        # 每一次尝试的 (host, 异常类名或状态码, 耗时 ms, 第几次)，取自 tax_http
+        "_attempts": list(attempts or []),
     }
     if filters:
         out["filters"] = filters

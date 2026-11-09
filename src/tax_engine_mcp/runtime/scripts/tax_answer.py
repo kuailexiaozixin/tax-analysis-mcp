@@ -524,16 +524,18 @@ OFFICIAL_LOOKUP_LIMIT = 4
 
 
 def _is_practice_row(row: dict) -> bool:
-    """认这一条是不是实务材料那一路，判据直接用定级层的同一个常量。
+    """认这一条是不是实务材料那一路，判据直接用定级层的那一个函数。
 
     条目上带的不是 "shui5" 这种源键，而是给人看的标签——`tax_shui5` 写
-    "税屋 (shui5.cn)"、`tax_wechat` 写"微信公众号"，搜狗回填的那批又是纯域名。
-    自己在这里列一组源键，列错时这个函数会一条都不认，核对静默变成空转，
-    输出上看不出任何异常；共用 `tax_evidence.PRACTICE_SOURCES` 就不会出现
-    "核对层认为不是实务、定级层认为是"这种两说的情形。
+    "税屋 (shui5.cn)"、`tax_wechat` 写"微信公众号"，搜狗回填的那批又是纯域名，
+    官方答复栏目（政策问答、12366 答疑）则只在标题与 URL 的栏目段里留下痕迹。
+    自己在这里列一组源名，列错时这个函数会一条都不认，核对静默变成空转，
+    输出上看不出任何异常；本轮实跑就是这个形状——税务总局货物和劳务税司政策问答
+    那一条带着文号却进不了核对，首跑回 `{"checked": 0, "skipped": 0}`。
+    判据与名单都在 `tax_evidence`（`is_practice_layer` 与 `PRACTICE_MARKS`），
+    两处共用，不会出现"核对层认为不是实务、定级层认为是"这种两说的情形。
     """
-    src = " ".join(str(row.get(k) or "") for k in ("source", "site", "url"))
-    return any(d in src for d in E.PRACTICE_SOURCES)
+    return E.is_practice_layer(row)
 
 
 _ISSUER_TOKENS = ("国家税务总局", "税务总局", "财政部", "海关总署",
@@ -713,8 +715,10 @@ def citation_note(cc: dict | None) -> str:
     if not by:
         # 说清楚是"哪一类条目没取回"：上面【执行口径与实务认定】那一栏可能明明
         # 有条目（官方解读也算实务），这一句却要说没核对，读者就会以为两句打架。
-        # 核对只管税屋与公众号，"实务材料"四个字撑不住这个区分。
-        return "本轮没有取回税屋或公众号的文章，没有文号需要回官方库核对"
+        # 核对管的是实务层那一路：税屋与公众号的文章，加上政策问答、答疑一类的
+        # 官方答复条目（判据见 `tax_evidence.PRACTICE_MARKS`）。
+        return ("本轮没有取回税屋或公众号的文章，也没有政策问答、答疑一类的"
+                "官方答复条目，没有文号需要回官方库核对")
     detail = "、".join(f"{E.OFFICIAL_OUTCOME_LABEL.get(k, k)} {v} 条"
                        for k, v in sorted(by.items(), key=lambda kv: kv[1],
                                           reverse=True))

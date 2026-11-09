@@ -94,6 +94,77 @@ PRACTICE_RANKS = ("technical", "interpretation")
 PRACTICE_SOURCES = ("shui5.cn", "mp.weixin.qq.com", "weixin.sogou.com",
                     "税屋", "微信公众号", "搜狗微信")
 
+# 官方答复栏目。这一类条目出自具体司局（货物和劳务税司政策问答、12366 答疑），
+# 是对一项具体业务的执行答复，不是可援引的法规文件本体：材料形态上与实务解读同档，
+# 同样要把援引的文号回官方库核对。`c100024` 是法规库里政策问答栏目的 URL 栏目段
+# （`/zcfgk/c100024/c5245218/content.html`），清单条目只带 URL 不带栏目名，
+# 少了这一枚标记，那一类条目在两处判据里都认不出来。
+OFFICIAL_QA_SOURCES = ("政策问答", "答疑", "问答", "12366", "c100024")
+
+# 实务层标记的总名单。定级（`rank_of`）与文号回库核对（`tax_answer` 的
+# `_is_practice_row`）两处共用这一份，也共用下面那一个取数函数：分开列名单时，
+# 实测出现过"核对层认为不是实务、定级层认为是"和反过来各漏一批的情形。
+PRACTICE_MARKS = PRACTICE_SOURCES + OFFICIAL_QA_SOURCES
+
+# 一行里可能写着来源或栏目信息的字段。各源用的键不统一（`source`/`source_label`
+# 是给人看的标签、`site` 与 `url` 是域名或带栏目段的地址、`column`/`channel`
+# 是栏目名），比对前一律拼成一段文本，判据只有一段可看。
+PRACTICE_TEXT_KEYS = ("source", "source_label", "site", "column", "channel", "url")
+
+
+def practice_text(row: dict, *extra: str) -> str:
+    """拼出一行里指向"这条材料从哪儿来、属哪个栏目"的文本，加上附带文本。"""
+    parts = [str(x) for x in extra if x]
+    for key in PRACTICE_TEXT_KEYS:
+        value = (row or {}).get(key)
+        if value:
+            parts.append(str(value))
+    return " ".join(parts)
+
+
+def practice_mark(text: str) -> str:
+    """一段来源或栏目文本里第一个命中的实务层标记；没命中给空串。"""
+    return next((m for m in PRACTICE_MARKS if m in (text or "")), "")
+
+
+def is_practice_layer(row: dict) -> bool:
+    """一条检索结果是不是实务层材料（实务站点或官方答复栏目）。
+
+    标题也读进来：官方答复件在清单里常常只有标题带着栏目词（"……政策问答"），
+    来源那一栏写的是站点名。定级与文号核对两处都调这一个函数，判据只此一份。
+    """
+    return bool(practice_mark(practice_text(row, (row or {}).get("title", ""))))
+
+
+# 正文可能只存在于附件里的两种录入形态：总局与法规库清单的 `attachments`
+# （接口 appendix 栏，元素带 name/url），人大法律库详情的 `oss_files`
+# （docx 与 pdf 两个下载链）。两处各写一遍派生判据迟早只改一处，收成一份。
+ATTACHMENT_FIELDS = ("attachments", "oss_files")
+
+
+def has_body_in_attachment(row: dict) -> bool:
+    """这条记录带着附件——正文里缺的那张表可能在附件里，而不是不在。
+
+    要分清的是两种"正文没有"：这条规定压根没有（红线⑦禁止把它写成有），
+    和条文本身带着一张只做在附件里的表（正文文本层读不到，得点附件）。实测两例：
+    法规库《印花税法》（`c100009/c5193058`）正文末尾只有"附：印花税税目税率表.ppt"，
+    人大法律库《碳排放权交易管理暂行条例》记录
+    （`ff8081819ff54a6401a0ae8df6842641`）的 content_tree 有 33 个节点但正文全空、
+    只有 docx 与 pdf。这里只回答"带没带附件"，正文在不在要靠调用方连着
+    `body_status` 或未取正文的提醒一起看——有附件不等于正文就在附件里。
+    """
+    for key in ATTACHMENT_FIELDS:
+        value = (row or {}).get(key)
+        if isinstance(value, dict):
+            if any(str(v or "").strip() for v in value.values()):
+                return True
+        elif isinstance(value, (list, tuple)):
+            if any(item.get("url") or item.get("name")
+                   for item in value if isinstance(item, dict)):
+                return True
+    return False
+
+
 
 def _tier(rank_key: str) -> int:
     """取层级序号；不在位阶序列内的形态（含未定性）一律 0。"""
@@ -146,7 +217,8 @@ def rank_of(title: str, category: str = "", source: str = "") -> dict:
         title: 法规名或文章标题。
         category: NPC 库返回的法律性质字段（flxz），如"法律""行政法规"。
             有它时优先用，接口给的分类比自己按标题猜准。
-        source: 来源标识，用来给"实务解读"兜底。
+        source: 来源标识，用来给实务层定档。传一行材料时把它拼成 `practice_text`
+            的结果，栏目名与 URL 的栏目段才进得了判据（见 `PRACTICE_MARKS`）。
 
     Returns:
         {"rank","label","tier","by"}，by 说明是按什么判出来的；tier 是层级序号。
@@ -177,8 +249,15 @@ def rank_of(title: str, category: str = "", source: str = "") -> dict:
         if pat.search(title):
             return _mk(key, f"标题形态匹配「{title[:24]}」")
 
-    if any(d in source for d in PRACTICE_SOURCES) or "解读" in title:
-        return _mk("interpretation", "来源或标题指向实务解读")
+    mark = practice_mark(" ".join(x for x in (source, title) if x))
+    if mark:
+        # 官方答复栏目归到技术性口径：它是司局对具体事项的执行答复，
+        # 不是第三方写的解读件，标签上不该混为一谈。
+        if mark in OFFICIAL_QA_SOURCES:
+            return _mk("technical", f"来源或栏目带有官方答复标记「{mark}」")
+        return _mk("interpretation", f"来源或标题带有实务标记「{mark}」")
+    if "解读" in title:
+        return _mk("interpretation", "标题含「解读」，是被解读文件的说明件")
 
     return _mk("unknown", "标题形态与来源都不足以定级")
 
@@ -670,7 +749,7 @@ def grade(item: dict, at: str = "", topic: str = "") -> dict:
         **没有 score 字段**——不做可引用性合成，理由见文件头。
     """
     rank = rank_of(item.get("title", ""), item.get("category", ""),
-                   item.get("source", ""))
+                   practice_text(item))
     val = judge_validity(item, at)
     topic_hit = on_topic_of(item, topic)
     rel = _reliability_of(item)

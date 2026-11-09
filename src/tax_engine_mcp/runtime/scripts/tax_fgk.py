@@ -48,6 +48,7 @@ import json
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -57,6 +58,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import tax_http
+import tax_evidence
 from tax_cache import CacheManager
 from tax_web_search import (FGK_MARKER, CHINATAX_HOST, FGK_HOST,
                             add_filter_args, aging_of, filters_from_args,
@@ -139,6 +141,31 @@ HEADERS = {
 
 _ZS_OPEN_RE = re.compile(r'<div class="zscont"[^>]*>', re.I)
 _ARC_OPEN_RE = re.compile(r'<div class="arc_cont"[^>]*>', re.I)
+
+# ── 正文取回状态 ────────────────────────────────────────────────────────────
+# 原先"拿到了"看 content、"没拿到"看 _error 里的措辞：调用方要看两个键、还要拿
+# 句子做子串比对才能判（search_fgk 就曾靠 "视频/图片" in _error 认视频条目）。
+# 这一组值把判定收进一个键：
+#   ok      —— 清洗后有文字条文
+#   dynamic —— HTTP 200、返回体短到装不下条文、且带着页面框架特征：正文靠脚本渲染
+#   empty   —— HTTP 200、正文容器取到、清洗后没有字（视频/图片型正文归这一类）
+#   error   —— 请求本身没成：连不上、非 200、本会话已判定不可用的通道
+BODY_OK = "ok"
+BODY_DYNAMIC = "dynamic"
+BODY_EMPTY = "empty"
+BODY_ERROR = "error"
+BODY_STATUSES = (BODY_OK, BODY_DYNAMIC, BODY_EMPTY, BODY_ERROR)
+
+#: 判定动态壳页的返回体上限（字符数）。实测两类壳页的静态 HTML 是 1,731 字
+#: （`c100009/c5193055`）与 939 字（`c100024/c5245218`），同站带条文的页面在万字级。
+DYNAMIC_SHELL_MAX_CHARS = 3000
+#: 框架特征：外链脚本。正文靠脚本渲染的页面必然是这个形态，带条文的静态页不是。
+_SHELL_SCRIPT_RE = re.compile(r"<script\b[^>]+\bsrc\s*=", re.I)
+
+#: 检索词里带着法规库标识时的直达通道：形如 `c100009/c5237365`（栏目段/文章段），
+#: 详情页地址是能拼出来的，不必等 search5 活着。上一轮 search5 多次 SSLError，
+#: 手里已经有标识却回空清单，等于把取数失败当成"库里没有"。
+_FGK_ID_PAIR_RE = re.compile(r"\b(c\d{5,9})/(c\d{5,9})\b", re.I)
 # 导航栏里也含 arc_cont，按顺序取最后一处才是正文
 _ZS_END_RE = re.compile(r'<div class="arc_cont"[^>]*>|</body>', re.I)
 _ARC_END_RE = re.compile(
@@ -206,6 +233,18 @@ def _table_lines(html: str) -> list:
     return out
 
 
+def _end_at(pattern, page: str, start: int) -> int:
+    """正文容器右边界的位置：找得到结束标记就用它，找不到就取到页尾。
+
+    arc_cont 开标签在、却缺 </body> 与后续 arc_cont/bot-btns-box 时，`.search()`
+    回 None，原先直接 `.start()` 会抛 AttributeError，把"页面截断/改版"这类
+    本该归 empty 或 error 的情形变成整个取数崩溃。取到页尾后交给下面的四态判定：
+    容器里有字就 ok、没字就 empty，与完整页面走同一条收口。
+    """
+    m = pattern.search(page, start)
+    return m.start() if m else len(page)
+
+
 def _text_of(fragment: str) -> str:
     fragment = re.sub(r"(?is)<(script|style)\b.*?</\1>", "", fragment)
     parts, pos = [], 0
@@ -270,16 +309,28 @@ def fetch_fgk_body(url: str) -> dict:
     """
     取法规库详情页正文。
 
+    请求经 `tax_http.attempt`：瞬时失败（断连、429、5xx）退避后重发，最多
+    `tax_http.DEFAULT_ATTEMPTS` 次，每一次尝试都记进返回值的 `_attempts`。
+    末次原因写在 `_error` 里并带着次数（"3 次尝试仍失败：HTTP 502"），
+    所以"试了几次都不通"与"一次不通"（那句就是光秃秃的 `HTTP 404`）在返回值上
+    就能分开；同一 host 连续两次 TLS 握手失败后本会话不再发第三个请求，
+    `_error` 回"该通道本会话已判定不可用"。
+
     Returns:
-        {"url","title","pub_date","content","meta"?,"_error"?}
+        {"url","body_status","_attempts","title"?,"pub_date"?,"content"?,
+         "meta"?,"media_only"?,"media_urls"?,"_error"?}
+        `body_status` 是判定键（值域见 `BODY_STATUSES`），`_error` 是给人看的那句
+        原因；视频/图片型正文归 `empty` 并另带 `media_only=True` 与素材地址，
+        与"取失败"分开——前者重试无用。
     """
-    out = {"url": url}
-    try:
-        # verify 显式传 True：这一路用 requests 的默认校验（tax_detail
-        # 与 tax_search 用的则是默认关闭的 VERIFY_SSL），这里不跟着关。
-        r = tax_http.get(url, headers=HEADERS, timeout=25, verify=True)
-    except requests.RequestException as e:
-        out["_error"] = f"请求失败：{tax_http.short_reason(e)}"
+    out = {"url": url, "body_status": BODY_ERROR, "_attempts": tax_http.new_log()}
+    # verify 显式传 True：这一路用 requests 的默认校验（tax_detail
+    # 与 tax_search 用的则是默认关闭的 VERIFY_SSL），这里不跟着关。
+    r, err, _blocked = tax_http.attempt(
+        lambda: tax_http.get(url, headers=HEADERS, timeout=25, verify=True),
+        url, out["_attempts"])
+    if err:
+        out["_error"] = err
         return out
     if r.status_code != 200:
         out["_error"] = f"HTTP {r.status_code}"
@@ -294,25 +345,44 @@ def fetch_fgk_body(url: str) -> dict:
     # 按位置切，不用嵌套正则：zscont 内部嵌套 div，贪婪/懒惰都拿不准边界，
     # 且 arc_cont 在导航栏里也出现，必须取 zscont 之后的第一处。
     note = raw_body = ""
+    located = False     # 是否定位到正文容器（与"定位到但里面没字"是两回事）
     zs = list(_ZS_OPEN_RE.finditer(page))
     arcs = list(_ARC_OPEN_RE.finditer(page))
     if zs and arcs:
         z = zs[-1]
-        note = page[z.end():_ZS_END_RE.search(page, z.end()).start()]
+        note = page[z.end():_end_at(_ZS_END_RE, page, z.end())]
         a = next((m for m in arcs if m.start() > z.start()), None)
         if a is not None:
-            raw_body = page[a.end():_ARC_END_RE.search(page, a.end()).start()]
+            raw_body = page[a.end():_end_at(_ARC_END_RE, page, a.end())]
+            located = True
     elif arcs:
         a = arcs[-1]
-        raw_body = page[a.end():_ARC_END_RE.search(page, a.end()).start()]
+        raw_body = page[a.end():_end_at(_ARC_END_RE, page, a.end())]
+        located = True
+
+    if not located:
+        # 页面回了 200 但静态 HTML 里没有正文容器。两种成因要在返回值上分开：
+        # 短页面 + 框架脚本 = 正文靠 JS 渲染（重发无用，得换取数路径）；
+        # 其余 = 页面结构与预期不符（改版或拿错了地址）。
+        if len(page) < DYNAMIC_SHELL_MAX_CHARS and _SHELL_SCRIPT_RE.search(page):
+            out["body_status"] = BODY_DYNAMIC
+            out["_error"] = ("正文为脚本渲染：静态 HTML 只有页面框架"
+                             f"（{len(page)} 字，无条文容器）")
+        else:
+            out["body_status"] = BODY_ERROR
+            out["_error"] = "未取到正文（页面结构与预期不符）"
+        return out
 
     if not raw_body:
-        out["_error"] = "未取到正文（页面结构与预期不符）"
+        out["body_status"] = BODY_EMPTY
+        out["_error"] = "正文容器为空"
         return out
 
     body = _text_of(raw_body)
     # 税法小课堂等栏目的正文是视频/图片，容器取得到但没有文字
     if not body and re.search(r"<(video|img|audio)\b", raw_body, re.I):
+        out["body_status"] = BODY_EMPTY
+        out["media_only"] = True
         out["_error"] = "该条正文为视频/图片，无文字内容"
         media = _media_urls(raw_body, url)
         if media:
@@ -321,9 +391,102 @@ def fetch_fgk_body(url: str) -> dict:
 
     out["content"] = "\n".join(x for x in (_text_of(note), body) if x)
     out["pub_date"] = (meta.get("pubdate", "") or "")[:10]
+    out["body_status"] = BODY_OK if out["content"] else BODY_EMPTY
     if not out["content"]:
         out["_error"] = "正文容器为空"
     return out
+
+
+def fgk_detail_url(column_id: str, article_id: str) -> str:
+    """把法规库标识拼成详情页地址（`c100009/c5237365` → 可直接取的 URL）。"""
+    return f"{FGK_HOST}/zcfgk/{column_id.lower()}/{article_id.lower()}/content.html"
+
+
+#: 详情页取正文的并发上限。实测口径：fgk.chinatax.gov.cn 详情页 4 条串行 1.69s、
+#: 4 线程并发 0.42s，两边各 4 条全部 ok、0 条 error（同日同端点，每次 GET 间隔 0）。
+#: 站上有串行闸的是 NPC 与搜狗，法规库详情页没有闸；这个数就是实测的那个上限，
+#: 未经重测不再往上加。
+BODY_MAX_WORKERS = 4
+
+
+def _fetch_one_body(url: str) -> dict:
+    """取一条正文；单条异常收成与 fetch_fgk_body 同形的失败结果，不拖垮整批。
+
+    返回形状与 `fetch_fgk_body` 一致（url/body_status/_attempts/_error），
+    调用点按同一套键处理，并发与串行走的是同一条收口。
+    """
+    try:
+        return fetch_fgk_body(url)
+    except Exception as e:                      # 单条失败只影响这一条
+        return {"url": url, "body_status": BODY_ERROR, "_attempts": [],
+                "_error": f"{type(e).__name__}：{e}"[:200]}
+
+
+def _fetch_bodies(urls: list) -> list:
+    """取若干条正文，返回与入参同序的结果列表（有界并发，结果按下标对齐）。
+
+    `ThreadPoolExecutor.map` 本身保序；0/1 条时走直调，不起线程池。
+    台账仍是每条自己的 `_attempts`，并发不改变"谁发了哪几次请求"的记账口径。
+    """
+    if len(urls) <= 1:
+        return [_fetch_one_body(u) for u in urls]
+    with ThreadPoolExecutor(max_workers=min(BODY_MAX_WORKERS, len(urls))) as pool:
+        return list(pool.map(_fetch_one_body, urls))
+
+
+def detail_ids_from_text(text: str) -> list:
+    """从一段文本里抠出法规库标识对，按出现顺序去重。
+
+    只认"栏目段/文章段"成对出现的写法（`c100009/c5237365`）：单给一个 `c5237365`
+    拼不出地址——栏目段决定页面挂在哪个栏目下，缺了它只能猜，猜错就是 404。
+    """
+    out, seen = [], set()
+    for column, article in _FGK_ID_PAIR_RE.findall(text or ""):
+        pair = (column.lower(), article.lower())
+        if pair not in seen:
+            seen.add(pair)
+            out.append(pair)
+    return out
+
+
+def _direct_entries(keyword: str) -> tuple[list, list, list]:
+    """检索接口失败时的退路：按标识直达详情页。
+
+    Returns:
+        `(条目, 台账, 未取回的说明)`。条目只带详情页 meta 里的标题与成文日期，
+        正文一律不落进这一层——`_scan_list` 的产出会进清单缓存，而缓存旧条文会把
+        已废止的当现行有效引用（正文永远现拉这条规矩不因走直达通道而松动）。
+        取回状态仍随 `_body_status` 交出去：动态壳页、空正文与取失败是三种
+        不同的下一步。
+    """
+    entries, attempts, failed = [], [], []
+    pairs = detail_ids_from_text(keyword)
+    urls = [fgk_detail_url(column, article) for column, article in pairs]
+    # 正文有界并发取，结果与 pairs 同序；每条仍各记自己的尝试台账
+    bodies = _fetch_bodies(urls)
+    for (column, article), body in zip(pairs, bodies):
+        url = fgk_detail_url(column, article)
+        attempts.extend(body.get("_attempts") or [])
+        entry = {
+            "title": body.get("title", ""),
+            "url": url,
+            "date": body.get("pub_date", ""),
+            "source": "税务总局法规库",
+            "source_label": "税务总局法规库",
+            # page=0 标明这一条不是检索翻页取回的，是按标识直达的
+            "page": 0,
+            "_direct_hit": True,
+            "_body_status": body.get("body_status", BODY_ERROR),
+        }
+        entry["body_in_attachment"] = tax_evidence.has_body_in_attachment(entry)
+        if body.get("media_only"):
+            entry["media_only"] = True
+        if body.get("_error"):
+            entry["_body_error"] = body["_error"]
+            failed.append(f"{column}/{article}：{body['_error']}")
+        else:
+            entries.append(entry)
+    return entries, attempts, failed
 
 
 # 详情页 URL 末段就是文章 id（/zcfgk/c{栏目}/c{文章id}/content.html），法律类
@@ -392,16 +555,17 @@ def fetch_associations(article_id: str) -> dict:
          "qas":[…],"_error"?}；_error 非空时四组均为空列表。
     """
     out = {"article_id": article_id, "files": [], "interpretations": [],
-           "guidances": [], "qas": []}
+           "guidances": [], "qas": [], "_attempts": tax_http.new_log()}
     if not article_id:
         out["_error"] = "URL 里取不到 articleId，无法查关联"
         return out
-    try:
-        r = tax_http.request("POST", f"{CHINATAX_HOST}/queryManuscriptAssociation",
-                             headers=HEADERS, timeout=25, verify=False,
-                             data={"id": article_id})
-    except requests.RequestException as e:
-        out["_error"] = f"请求失败：{tax_http.short_reason(e)}"
+    assoc_url = f"{CHINATAX_HOST}/queryManuscriptAssociation"
+    r, err, _blocked = tax_http.attempt(
+        lambda: tax_http.request("POST", assoc_url, headers=HEADERS, timeout=25,
+                                 verify=False, data={"id": article_id}),
+        assoc_url, out["_attempts"])
+    if err:
+        out["_error"] = err
         return out
     if r.status_code != 200:
         out["_error"] = f"HTTP {r.status_code}"
@@ -467,10 +631,13 @@ def _scan_list(keyword: str, size: int, max_pages: int,
     empty_reason = ""
     filter_note = ""
     total_hits = 0
+    attempts = []           # 每一次网络尝试的四元组台账
+    direct_note = ""
     for page in range(1, max(1, max_pages) + 1):
         found = search_chinatax(keyword, page=page, size=PAGE_SIZE,
                                 filters=filters, file_only=file_only,
                                 order=order)
+        attempts.extend(found.get("_attempts") or [])
         if not first_error and found.get("_error"):
             first_error = found["_error"]
         if page == 1:
@@ -508,6 +675,10 @@ def _scan_list(keyword: str, size: int, max_pages: int,
                     entry[k] = item[k]
             if item.get("attachments"):
                 entry["attachments"] = item["attachments"]
+            # 带着附件的条目在文本层之外还有一份可点的原文（税率表、清单常只做成
+            # 附件）。正文取回来是空的时，这个键把"这条规定不存在"与"正文在附件里"
+            # 分开——判据在 tax_evidence.has_body_in_attachment，与详情层共用一份。
+            entry["body_in_attachment"] = tax_evidence.has_body_in_attachment(entry)
             if entry.get("effect_level"):
                 entry["category"] = entry["effect_level"]
             if page > FGK_SHALLOW_PAGES:
@@ -537,6 +708,8 @@ def _scan_list(keyword: str, size: int, max_pages: int,
         "searched_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "source": "税务总局法规库 (fgk.chinatax.gov.cn)",
         "_from_cache": False,
+        # 每一次尝试的 (host, 异常类名或状态码, 耗时 ms, 第几次)，见 tax_http
+        "_attempts": attempts,
     }
     if filters:
         result["filters"] = filters
@@ -546,6 +719,30 @@ def _scan_list(keyword: str, size: int, max_pages: int,
     if first_error:
         result["_error"] = first_error
         result["_fetch_failed"] = True
+        # 检索接口不通、但检索词里就带着法规库标识（形如 c100009/c5237365）：
+        # 详情页地址是能拼出来的，直接取详情页，而不是把这一轮交回空清单。
+        # 直达取到条目时把标记换成 _search_failed：清单这一路确实失败了，但手里
+        # 有条目，而消费方（tax_answer._fgk_lookup_row）见到 _fetch_failed 会把整轮
+        # 读成"什么都没有"。一条都没取到时 _fetch_failed 原样留着，绝不清零——
+        # "取数失败"与"0 条命中"必须在返回值上分得开（红线⑦）。
+        if detail_ids_from_text(keyword):
+            direct, direct_attempts, direct_failed = _direct_entries(keyword)
+            attempts.extend(direct_attempts)
+            result["_search_failed"] = True
+            tail = ("；".join(direct_failed) if direct_failed else
+                    "详情页回的是空正文或未定位到正文容器")
+            if direct:
+                results.extend(direct[:size])
+                result["total"] = len(results)
+                result["direct_from_ids"] = True
+                result.pop("_fetch_failed", None)
+                result["_error"] = (
+                    f"{first_error}；检索词里带着法规库标识，已改按标识直达详情页，"
+                    f"取回 {len(direct)} 条"
+                    + (f"，另有 {len(direct_failed)} 个标识未取回：" + tail
+                       if direct_failed else ""))
+            else:
+                result["_error"] = f"{first_error}；按标识直达详情页也未取回：{tail}"
     elif empty_reason:
         # 接口给了命中数、这一页没给清单：不能写成"翻完 N 页未筛出法规库条目"，
         # 那是把接口的返回形态当成库的内容。
@@ -596,10 +793,19 @@ def search_fgk(keyword: str, size: int = 10, with_body: bool = False,
 
     Returns:
         {"keyword","total","total_hits","pages_scanned","stopped_early","results",
-         "searched_at","source","_from_cache","_cache_age_s"?,"_error"?,"filters"?}
+         "searched_at","source","_from_cache","_attempts","_cache_age_s"?,"_error"?,
+         "filters"?}
         每项含 title/document_number/date/publisher/url；with_body 时另有
-        body（正文）。正文是视频/图片的条目另带 media_only=True——表示"本来
-        就没有文字"，与取失败的 body_error 区分开，上层据此判断无需重试。
+        body（正文）与 `body_status`（取值见 `BODY_STATUSES`，是"拿到了/页面是
+        动态壳/清洗后没字/取失败"的唯一判定键，`body_error` 只是给人看的原因句）。
+        正文是视频/图片的条目另带 media_only=True——表示"本来就没有文字"，
+        与取失败的 body_status=error 区分开，上层据此判断无需重试。
+        `_attempts` 是这一轮发过的每一次请求 `(host, 异常类名或状态码, 耗时 ms,
+        第几次)`；清单命中缓存时那几条是写下这份清单那一轮发过的请求，正文的
+        尝试仍照本轮真实发出追加在后面。
+        检索接口失败但检索词里带着法规库标识（`c100009/c5237365` 这种）时，
+        改按标识直达详情页取条目，带 `direct_from_ids=True`；直达也没取到时
+        `_fetch_failed` 保持 True，绝不清零成"0 条命中"。
     """
     # 不带维度时不追加键段，旧基准（LIST_KEY_REV）写下的无过滤清单继续命中，
     # 不必整体重抓；带维度时把排序后的键值拼进去，None 与 {} 视作同一种"无过滤"。
@@ -629,21 +835,33 @@ def search_fgk(keyword: str, size: int = 10, with_body: bool = False,
 
     # 正文永远现拉，绝不缓存（避免引用过期条文）
     if with_body:
-        for entry in result["results"]:
-            if not entry.get("url"):
-                continue
-            body = fetch_fgk_body(entry["url"])
+        # 先收集要取正文的条目，再按实测允许的上限有界并发取，结果与条目同序套回。
+        # 各站自己的串行闸（NPC、搜狗）不在这一条路径上，这条只并发法规库详情页。
+        targets = [entry for entry in result["results"] if entry.get("url")]
+        bodies = _fetch_bodies([entry["url"] for entry in targets])
+        for entry, body in zip(targets, bodies):
             entry["body"] = body.get("content", "")
+            # 判定只认这一个键；body_error 留给人读的那句原因
+            entry["body_status"] = body.get("body_status", BODY_ERROR)
+            # 清单层已带 `_attempts`（直达通道的那几条在里面），正文的尝试续在后面
+            entry["_attempts"] = (entry.get("_attempts") or []) + \
+                (body.get("_attempts") or [])
             if body.get("pub_date") and not entry["date"]:
                 entry["date"] = body["pub_date"]
             if body.get("_error"):
                 entry["body_error"] = body["_error"]
                 # 视频/图片条目单独标出来：这不是"取失败"，是"本来就没有文字"。
-                # 上层见到 media_only 就知道不该去引条文，也不必重试。
-                if "视频/图片" in body["_error"]:
+                # 上层见到 media_only 就知道不该去引条文，也不必重试。标记由
+                # fetch_fgk_body 直接给，不再靠比对错误句子里的字。
+                if body.get("media_only"):
                     entry["media_only"] = True
                 if body.get("media_urls"):
                     entry["media_urls"] = body["media_urls"]
+    # 条目级的尝试台账汇总一份到轮次级：整轮发过几次请求、都败在哪，一眼能数出来
+    agg = list(result.get("_attempts") or [])
+    for entry in result["results"]:
+        agg.extend(entry.pop("_attempts", None) or [])
+    result["_attempts"] = agg
     return result
 
 
