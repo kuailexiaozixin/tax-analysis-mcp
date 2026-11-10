@@ -106,6 +106,49 @@ def order_text(order: str) -> str:
     return f"{order}（orderBy={ORDER_VALUES[order]}）"
 
 
+def keyword_terms(keyword: str) -> list:
+    """按空白切出检索词里的各枚词，丢掉空白段。"""
+    return [t for t in re.split(r"\s+", (keyword or "").strip()) if t]
+
+
+def keyword_note(keyword: str, results: list, total: int) -> str:
+    """多枚词拼成一串时，用已经取回的那一页说清本轮由哪枚词主导。不多发请求。
+
+    search5 对空格分隔的多词按**任一词命中**，不是 AND。2026-11-10 本机实测
+    （size=10，FILE_LABELS 默认档，逐发读数见 subskills/chinatax/NOTE.md）：
+    「碳排放权 增值税」1911 条、「碳排放权」1 条，前者首屏十条全是小规模纳税人
+    减免增值税公告，标题含「碳排放」0 条；加 wordPlace=1 收到 909 条、首屏仍是
+    同一批；加 participleRule=5 收到 73 条，单独发「碳排放权」命中的那一份
+    （c100013/c5194808）升到首屏第 3 位，但它的标题里不含专题词，按标题计数仍是 0。
+    所以"专题词＋税种词"这种拼法必然被基数大的那枚词顶掉，而仅标题匹配改的是
+    匹配域、不改这个语义。
+
+    只在"多枚词且至少一枚在首屏标题里 0 命中"时出声：单词检索、几枚词都命中、
+    以及真的 0 条这三种情形都不该多一句提醒。计数只看标题，所以结论也只能说到
+    标题这一层——正文命中的那一份可能就在首屏里，写成"首屏没有条目"会把它说没。
+    """
+    terms = keyword_terms(keyword)
+    if len(terms) < 2 or not results:
+        return ""
+    counts = {t: sum(1 for r in results if t in (r.get("title") or "")) for t in terms}
+    absent = [t for t in terms if not counts[t]]
+    if not absent:
+        return ""
+    present = [t for t in terms if counts[t]]
+    tally = "、".join(f"「{t}」{counts[t]} 条" for t in terms)
+    head = (f"检索词「{keyword}」含 {len(terms)} 枚词，search5 按任一词命中、不是 AND："
+            f"取回的 {len(results)} 条标题里 {tally}，接口报命中 {total} 条。")
+    if present:
+        middle = (f"本轮由{'、'.join(f'「{t}」' for t in present)}主导，"
+                  f"{'、'.join(f'「{t}」' for t in absent)}在首屏标题里没有条目。")
+    else:
+        middle = (f"{'、'.join(f'「{t}」' for t in absent)}都没出现在首屏标题里，"
+                  f"命中来自正文或摘要，标题这一层看不出本轮召回的是什么。")
+    return (head + middle
+            + f"要按专题取就单独发「{absent[0]}」；要几枚词都命中加 --precise（精准分词）。"
+              f"--in-title 只把匹配域收到标题，不改任一词命中的语义。")
+
+
 def build_filters(in_title: bool = False, precise: bool = False,
                   tax_type: str = "", doc_type: str = "", doc_year: str = "",
                   doc_no: str = "", cwrq_from: str = "", cwrq_to: str = "",
@@ -232,13 +275,15 @@ def search_chinatax(keyword: str, page: int = 1, size: int = 10,
 
     Returns:
         {"keyword","total","results","searched_at","source","_error"?,"_from_cache",
-         "_attempts","filters"?,"_filter_note"?}
+         "_attempts","filters"?,"_filter_note"?,"_keyword_note"?}
         total 是检索命中的总条数（可能远大于 results 长度）；
         total 为 0 时若有 _error，说明是请求失败而非无结果。
         _attempts 是这一轮发过的每一次请求：`(host, 异常类名或 HTTP 状态码,
         耗时 ms, 第几次尝试)`，由 `tax_http.attempt` 记账，成本归因看它。
         传了 filters 时把 filters 原样回显；filters 收窄到 0 条且非请求失败时，
         补一句 _filter_note 说明是维度拼窄了还是库里真没有。
+        检索词含多枚词而首屏标题缺其中一枚时补一句 _keyword_note：search5 对
+        空格拼串按任一词命中，这一句只用已经取回的这一页算，不多发请求。
     """
     if order not in ORDER_VALUES:
         raise ValueError(f"order 只认 {tuple(ORDER_VALUES)}，收到 {order!r}")
@@ -329,6 +374,9 @@ def search_chinatax(keyword: str, page: int = 1, size: int = 10,
     }
     if filters:
         out["filters"] = filters
+    note = keyword_note(keyword, results, total)
+    if note:
+        out["_keyword_note"] = note
     # 命中数大于 0 但这一页没有条目。两种成因要分开写，处置完全不同：
     # 页号越过末页（每页固定 10 条，命中 3 条时只有第 1 页）是正常收尾；
     # 第 1 页就空则是接口这一轮没给清单，不能读成"库里没有"。
@@ -507,6 +555,8 @@ def main():
         print(f"⚠️  {result['_error']}")
     if result.get("_filter_note"):
         print(f"ℹ️  {result['_filter_note']}")
+    if result.get("_keyword_note"):
+        print(f"ℹ️  {result['_keyword_note']}")
     print(f"命中 {result['total']} 条，取回 {len(result['results'])} 条\n")
 
     for item in result.get("results", []):

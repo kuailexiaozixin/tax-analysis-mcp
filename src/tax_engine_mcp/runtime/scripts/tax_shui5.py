@@ -58,6 +58,9 @@ NPC 法规库里查不到的实操层内容，是四源之外的必要补充。
 Usage:
   python tax_shui5.py "研发费用加计扣除" --size 5
   python tax_shui5.py "高新技术企业认定" --size 5 --read   # 连正文一起取
+  python tax_shui5.py "碳排放权交易" "碳交易" "自愿减排" --size 5 --read
+                                                        # 同一专题多枚词一轮发：
+                                                        # 正文合成一次连读、WAF 只过一次
   python tax_shui5.py "增值税起征点" --size 3 --json
   python tax_shui5.py "留抵退税" --channel native --size 10   # 只走站内检索
   python tax_shui5.py "研发费用加计扣除" --match title --all   # 只匹配标题、按总数取全
@@ -659,7 +662,8 @@ def search_native(keyword: str, size: int = 5, session: requests.Session | None 
 def search_shui5(keyword: str, size: int = 5, read_body: bool = False,
                  channel: str = "auto", column: str | int | None = None,
                  date_from: str = "", date_to: str = "", match: str = "broad",
-                 fetch_all: bool = False) -> dict:
+                 fetch_all: bool = False,
+                 session: requests.Session | None = None) -> dict:
     """
     在税屋检索政策实务文章。
 
@@ -680,6 +684,8 @@ def search_shui5(keyword: str, size: int = 5, read_body: bool = False,
                 缺口写在结果的 _filter_note 里。
         match: "broad"（默认）或 "title"（只在标题里匹配），走站内那一路。
         fetch_all: 按站点报的总条数翻到底（上限 SEARCH_ALL_MAX_PAGES 页），走站内那一路。
+        session: 本轮已经过好的 WAF 会话，交给站内检索与正文连读共用；不给则各自过一次。
+            多枚词一轮发时由 search_many 持有并负责关闭。
 
     Returns:
         {"keyword","total","results","searched_at","source","_channel",
@@ -728,10 +734,11 @@ def search_shui5(keyword: str, size: int = 5, read_body: bool = False,
 
     nat = None
     if channel == "auto" and not results:
-        nat = search_native(keyword, size=size)
+        nat = search_native(keyword, size=size, session=session)
     elif channel == "native":
-        nat = search_native(keyword, size=size, classid=column, date_from=date_from,
-                            date_to=date_to, match=match, fetch_all=fetch_all)
+        nat = search_native(keyword, size=size, session=session, classid=column,
+                            date_from=date_from, date_to=date_to, match=match,
+                            fetch_all=fetch_all)
     if nat is not None:
         channels["站内"] = nat["_status"]
         results = nat["results"]
@@ -747,23 +754,8 @@ def search_shui5(keyword: str, size: int = 5, read_body: bool = False,
     how = ""
     if read_body and results:
         # 一次过 WAF、连读全部，不逐篇重启浏览器
-        arts = read_articles([r["url"] for r in results])
-        for row, art in zip(results, arts):
-            row["content"] = art.get("content", "")
-            row["pages"] = art.get("pages", 1)
-            if art.get("title"):
-                row["title"] = _strip_site_suffix(art["title"])
-            row["date"] = art.get("date", "") or row["date"]
-            if art.get("summary"):
-                row["summary"] = art["summary"]
-            if art.get("repeal_note"):
-                row["repeal_note"] = art["repeal_note"]
-            if art.get("repeal_basis"):
-                row["repeal_basis"] = art["repeal_basis"]
-            if art.get("_error"):
-                row["_error"] = art["_error"]
-            if art.get("_pages_error"):
-                row["_pages_error"] = art["_pages_error"]
+        arts = read_articles([r["url"] for r in results], session=session)
+        _attach_bodies(results, arts)
         how = arts[-1].get("_how", "") if arts else ""
 
     out = {
@@ -782,6 +774,134 @@ def search_shui5(keyword: str, size: int = 5, read_body: bool = False,
         out["_filter_note"] = note
     if how:
         out["_how"] = how
+    return out
+
+
+def _attach_bodies(rows: list, arts: list) -> None:
+    """把连读取回的正文按位次贴到清单行上。单词与多词两条路共用这一份映射。"""
+    for row, art in zip(rows, arts):
+        row["content"] = art.get("content", "")
+        row["pages"] = art.get("pages", 1)
+        if art.get("title"):
+            row["title"] = _strip_site_suffix(art["title"])
+        row["date"] = art.get("date", "") or row["date"]
+        if art.get("summary"):
+            row["summary"] = art["summary"]
+        if art.get("repeal_note"):
+            row["repeal_note"] = art["repeal_note"]
+        if art.get("repeal_basis"):
+            row["repeal_basis"] = art["repeal_basis"]
+        if art.get("_error"):
+            row["_error"] = art["_error"]
+        if art.get("_pages_error"):
+            row["_pages_error"] = art["_pages_error"]
+
+
+def search_many(keywords: list, size: int = 5, read_body: bool = True,
+                channel: str = "auto", column: str | int | None = None,
+                date_from: str = "", date_to: str = "", match: str = "broad",
+                fetch_all: bool = False) -> dict:
+    """同一专题的多枚词一轮发：逐词检索，正文合成一次连读，WAF 只过一次。
+
+    为什么要有这一档：站点按整串匹配，空格不是 AND（见 search_native），所以一个
+    专题要拆成几枚词分别发；而每发一次进程就要重新过一次 WAF（浏览器预热 5.9~7.0 秒），
+    正文连读又各过一次。三枚词分三次发，付的是六次预热；合成一轮付一次。
+
+    词与词之间留 SEARCH_MIN_GAP：站点自己声明两次检索须间隔 2 秒以上，共用一份会话
+    不等于可以连着发。
+
+    Args:
+        keywords: 检索词列表。空白词丢掉、重复词折叠，保持给出的次序。
+        size: 每一词的条数上限（不是合并后的上限）。
+        read_body: 默认 True——首轮就把候选正文一起取回，省掉"看完清单再发一轮读正文"。
+        channel / column / date_from / date_to / match / fetch_all: 逐词照传给 search_shui5。
+
+    Returns:
+        {"keywords","total","results","searched_at","source","_channel","_channels",
+         "_per_keyword","_from_cache","_how"?,"_filter_note"?,"_error"?}
+        total 与 results 是**按 URL 去重后**的篇数与行；两枚词都命中的那一行带
+        matched_keywords 列出是哪几枚。_per_keyword 逐词留命中数、通道与失败原因，
+        合并不会把"某一词 0 条"抹掉。
+    """
+    words = list(dict.fromkeys(w.strip() for w in (keywords or []) if w and w.strip()))
+    if not words:
+        raise ValueError("search_many 至少要一枚非空检索词")
+
+    scoped = bool(column or date_from or date_to or match != "broad" or fetch_all)
+    session, how = None, ""
+    # 正文连读与站内检索都要凭据；搜狗那一路不要，所以只在真会用站内时先过 WAF。
+    if read_body or channel == "native" or (scoped and channel != "sogou"):
+        session, how = _pass_waf()
+
+    per: list = []
+    rows: list = []
+    by_url: dict = {}
+    searched_at = time.strftime("%Y-%m-%d %H:%M:%S")
+    from_cache = False
+    try:
+        for i, word in enumerate(words):
+            if i:
+                time.sleep(SEARCH_MIN_GAP)
+            got = search_shui5(word, size=size, read_body=False, channel=channel,
+                               column=column, date_from=date_from, date_to=date_to,
+                               match=match, fetch_all=fetch_all, session=session)
+            per.append({"keyword": word, "total": got["total"],
+                        "channel": got.get("_channel", ""),
+                        "channels": got.get("_channels", {}),
+                        "error": got.get("_error", ""),
+                        "filter_note": got.get("_filter_note", "")})
+            searched_at = got.get("searched_at", searched_at)
+            from_cache = from_cache or bool(got.get("_from_cache"))
+            # auto 通道首词退回站内时，它内部已过的那份会话不外传；从这里起
+            # 剩下的词共用新过的一份，不再逐词各付一次预热。
+            if session is None and got.get("_channel") == "站内":
+                session, how = _pass_waf()
+            for row in got["results"]:
+                url = row.get("url")
+                if not url:
+                    continue
+                if url in by_url:
+                    kept = by_url[url]["matched_keywords"]
+                    if word not in kept:
+                        kept.append(word)
+                    continue
+                row = dict(row, matched_keywords=[word])
+                by_url[url] = row
+                rows.append(row)
+        if read_body and rows:
+            arts = read_articles([r["url"] for r in rows], session=session)
+            _attach_bodies(rows, arts)
+            if not how:
+                how = arts[-1].get("_how", "") if arts else ""
+    finally:
+        if session is not None:
+            session.close()
+
+    used = sorted({p["channel"] for p in per if p["channel"]})
+    channels = {}
+    for name in ("搜狗", "站内"):
+        n = sum(1 for p in per if p["channels"].get(name, "").startswith("命中"))
+        channels[name] = f"{len(words)} 词中 {n} 词取到"
+    out = {
+        "keywords": words,
+        "total": len(rows),
+        "results": rows,
+        "searched_at": searched_at,
+        "source": "税屋 (shui5.cn)",
+        "_channel": "、".join(used),
+        "_channels": channels,
+        "_per_keyword": per,
+        "_from_cache": from_cache,
+    }
+    if how:
+        out["_how"] = how
+    notes = [f"「{p['keyword']}」{p['filter_note']}" for p in per if p["filter_note"]]
+    if notes:
+        out["_filter_note"] = "；".join(notes)
+    if not rows:
+        errs = [f"「{p['keyword']}」{p['error']}" for p in per if p["error"]]
+        out["_error"] = ("；".join(errs) if errs
+                         else f"{len(words)} 枚词都没取到条目")
     return out
 
 
@@ -1122,7 +1242,8 @@ def list_tag(tag: str, pages: int = 1, session: requests.Session | None = None,
             session.close()
 
 
-def read_articles(urls: list, read_interval: float = READ_INTERVAL) -> list:
+def read_articles(urls: list, read_interval: float = READ_INTERVAL,
+                  session: requests.Session | None = None) -> list:
     """
     连续取多篇正文，WAF 只过一次。
 
@@ -1133,6 +1254,9 @@ def read_articles(urls: list, read_interval: float = READ_INTERVAL) -> list:
     Args:
         urls: 税屋文章地址列表
         read_interval: 逐篇之间的间隔秒数，站点对高频请求敏感
+        session: 本轮已经过好的 WAF 会话。给了就沿用、也不关它——关由借出方负责，
+            多词一轮发时同一份会话还要交给后面的词（见 search_many）。
+            不给则自己过一次并在结束时关掉。
 
     Returns:
         与 urls 等长的 dict 列表，每项含 url/content/title/date/summary/pages，
@@ -1141,7 +1265,11 @@ def read_articles(urls: list, read_interval: float = READ_INTERVAL) -> list:
     if not urls:
         return []
 
-    session, how = _pass_waf(urls[0])
+    own = session is None
+    if own:
+        session, how = _pass_waf(urls[0])
+    else:
+        how = "沿用本轮已过的 WAF 会话"
 
     out = []
     try:
@@ -1150,7 +1278,7 @@ def read_articles(urls: list, read_interval: float = READ_INTERVAL) -> list:
             if i < len(urls) - 1:
                 time.sleep(read_interval)
     finally:
-        if session is not None:
+        if own and session is not None:
             session.close()
     for row in out:
         row["_how"] = how
@@ -1216,6 +1344,8 @@ def _print_rows(rows: list, read_body: bool = False) -> None:
         meta = " ".join(x for x in (item.get("date", ""), item.get("column", "")) if x)
         if meta:
             print(f"     {meta}")
+        if len(item.get("matched_keywords") or []) > 1:
+            print("     命中词：" + "、".join(item["matched_keywords"]))
         if item.get("_error"):
             print(f"     正文读取失败: {item['_error']}")
         elif item.get("content"):
@@ -1237,8 +1367,10 @@ def _print_table(rows: list) -> None:
 
 def main():
     p = argparse.ArgumentParser(description="税屋 (shui5.cn) 检索、栏目清单与标签清单")
-    p.add_argument("keyword", nargs="?",
-                   help="检索词。用 --column / --tag 取清单时可以不填")
+    p.add_argument("keyword", nargs="*",
+                   help="检索词，可给多枚：同一专题的几枚词一轮发，正文合成一次连读、"
+                        "WAF 只过一次（站点按整串匹配，空格不是 AND，不要拼成一串）。"
+                        "用 --column / --tag 取清单时可以不填")
     p.add_argument("--size", type=int, default=None,
                    help="返回条数上限，默认 5；--find-doc 那一档默认 20，"
                         "因为同一枚文号的候选常常不止五条")
@@ -1330,22 +1462,37 @@ def main():
     if not args.keyword:
         p.error("缺检索词（或改用 --column/--list/--tag/--find-doc/--columns）")
 
-    result = search_shui5(args.keyword, size=size, read_body=args.read,
-                          channel=args.channel, column=args.column,
-                          date_from=args.date_from, date_to=args.date_to,
-                          match=args.match, fetch_all=args.all)
+    opts = dict(size=size, read_body=args.read, channel=args.channel,
+                column=args.column, date_from=args.date_from, date_to=args.date_to,
+                match=args.match, fetch_all=args.all)
+    if len(args.keyword) > 1:
+        result = search_many(args.keyword, **opts)
+    else:
+        result = search_shui5(args.keyword[0], **opts)
 
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return
 
-    print(f"税屋检索 \"{args.keyword}\" | {result['searched_at']}")
+    if len(args.keyword) > 1:
+        print(f"税屋一轮 {len(result['keywords'])} 枚词 | {result['searched_at']}")
+        for part in result["_per_keyword"]:
+            line = f"  「{part['keyword']}」{part['total']} 条"
+            if part["channel"]:
+                line += f"（{part['channel']}）"
+            if part["error"]:
+                line += f" 注意：{part['error']}"
+            print(line)
+    else:
+        print(f"税屋检索 \"{args.keyword[0]}\" | {result['searched_at']}")
     print("通道：" + "，".join(f"{k} {v}" for k, v in result["_channels"].items()))
+    if result.get("_how"):
+        print("取正文：" + result["_how"])
     if result.get("_filter_note"):
         print(f"提醒：{result['_filter_note']}")
     if result.get("_error"):
         print(f"注意：{result['_error']}")
-    print(f"共 {result['total']} 条\n")
+    print(f"共 {result['total']} 条{'（按 URL 去重后）' if len(args.keyword) > 1 else ''}\n")
     _print_rows(result["results"], args.read)
 
 

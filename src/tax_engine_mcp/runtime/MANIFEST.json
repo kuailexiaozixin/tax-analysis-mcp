@@ -1,6 +1,6 @@
 {
   "engine": "tax-analysis",
-  "engine_version": "3.61.0",
+  "engine_version": "3.62.0",
   "files": {
     "data/contract_intake_template.json": "771e60f68a16cabb4515ffc691207c76e8f206a93ee64e1e1a20f2d98f158edf",
     "data/control_activities.json": "a7fe3bb0fa649581c7661107143870c1250a6b381e6964ee70aa1a37370ff839",
@@ -22,7 +22,7 @@
     "scripts/tax_control.py": "cb47664633d4b8c9527130a3f15ef313c5a109946d63c149877c253000a4dd7e",
     "scripts/tax_coverage.py": "5f010e7ec9d5b3757b32879aec9883359c8de1a8ad7aae2c8919e0977596b273",
     "scripts/tax_ctax.py": "8aeae942ae9ebe7ad16dfad4c4fccba72cc7d957851dd0f237339dd7d4aef4b9",
-    "scripts/tax_detail.py": "64d913e6ddbbfc51fbb5744a65462c334bc20e8e975da02348f79e55304f3aff",
+    "scripts/tax_detail.py": "6e3b09990880e0ab483e700d903393ded5674849c4173a7f483577f9ccb15435",
     "scripts/tax_evidence.py": "4a78ff2b8e9472dcf1b63eb61a63d4fb8a1e7ec6b4477e7b6710032a440ccaf1",
     "scripts/tax_fgk.py": "77d4cb43b53660ec4ee47e6b12b062fd765abc43f9fcd40cd2a7cb9a8df21db5",
     "scripts/tax_http.py": "db2ccd4a49fb427ea000568df1dc8e1f7d5c12313a2bdd0e238e4a77fdbe0483",
@@ -31,10 +31,10 @@
     "scripts/tax_ledger.py": "e6724ad0e23e933992108baf4564376eb01dcd3fb13cd64aa169b84bc89ee9cf",
     "scripts/tax_related.py": "2516a9e69f90116bd42bc1662f51e00eeadbbae8326e8b62fdf58f3498109af1",
     "scripts/tax_search.py": "a97cbba34a40cbd2183fd6970fee398496c2d6e2e2a730f7dc3cdb5311d9176a",
-    "scripts/tax_shui5.py": "96b79d9d3f29a2cf08690560c071311012b730dd7bb1fdb2a7ac04bdbc33e2ba",
+    "scripts/tax_shui5.py": "fe28921ede1c87af6206e52515bbd8438b03676dc28b4bf47a1cda4e172c384d",
     "scripts/tax_sogou.py": "8c6a61f6818c791b7a5ff82aad91751a638dd412cbde83605cef98b7e039e512",
     "scripts/tax_terms.py": "244897239141898450f78ca355977a29fc7cb364605a30623d469fb4b5443a91",
-    "scripts/tax_web_search.py": "74243daac145a8d248d21565ff5675195d327f4096c43dec0d0aad4f40d48013",
+    "scripts/tax_web_search.py": "29e2dc366bd811e60686c5472a0392d2f6327f40355bd084b7f22a20bcf9f5f7",
     "scripts/tax_wechat.py": "3849f62dcb9187dec4ea3951f9849e29d3da848cf8ca0bb9bbbf35866fb6cea2"
   }
 }
