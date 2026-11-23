@@ -628,12 +628,24 @@ def search_native(keyword: str, size: int = 5, session: requests.Session | None 
         # 落点页就是 page=0（实测两页首条与行数一致），继续从 1 翻到够数或到上限
         pn = 1
         read = 1
+        dropout = None
         while len(rows) < want and pn <= cap:
             time.sleep(gap)
             rp = session.get(f"{SEARCH_RESULT}?page={pn}&searchid={sid}",
                              timeout=TIMEOUT_READ, verify=False)
             nxt = _search_rows(rp.content.decode("utf-8", "replace"))
             if not nxt:
+                # 空页的两种成因实测能分开（2026-11-24，11 个词逐页量）：站点报的
+                # total 与我们能解出的行数逐页相等（去重与站外丢弃都没减过数），自然
+                # 尽头一律是"残页 → 空页"，空页出现时 collected 已经等于 total。所以
+                # "还没吐满 total 就空"只可能是这一页没取到，不是这一词只有这些。
+                # 旧写法在这里直接 break，交回的半截清单看着像完整集合：--all 档只取
+                # 了 150/1000 也照样往下走，聚合层（tax_aggregator.py:381 只认 _error）
+                # 更不知道出过事。判为断供，别替站点圆场。
+                if total is not None and int(total) > 0 and len(rows) < int(total):
+                    dropout = (f"第 {pn} 页返回空，但站点报这一词共 {total} 条、"
+                               f"只收了 {len(rows)} 条：清单源实测不会在吐满前给空页，"
+                               f"这一页判为断供，交回的 {len(rows)} 条不是这一词的完整集合")
                 break
             read += 1
             for x in nxt:
@@ -643,12 +655,20 @@ def search_native(keyword: str, size: int = 5, session: requests.Session | None 
             pn += 1
         got = rows if fetch_all else rows[:size]
         status = f"命中 {len(got)} 条"
-        if total is not None:
+        if dropout:
+            # 断供不能借用"翻到上限"那句：上限根本没 binding（这一轮只读了 read 页，
+            # cap 可能还有 20），报成上限是把站点没吐完说成我们自己不想翻了。
+            status = f"{status}（这一词站内共 {total} 条；{dropout}）"
+        elif total is not None:
             status += f"（这一词站内共 {total} 条"
             if fetch_all and len(rows) < total:
                 status += f"，翻到上限 {cap} 页只取了 {len(rows)} 条"
             status += "）"
         out = {"results": got, "total": total, "_status": status, "_pages": read}
+        if dropout:
+            # 聚合层只认 _error 才把这一源记进 errors（tax_aggregator.py:381），
+            # 断供不写出去就只剩 _status，上层报成"取到几条"= 把没取到说成没有。
+            out["_error"] = dropout
         if note:
             out["_filter_note"] = note
         return out
@@ -733,6 +753,7 @@ def search_shui5(keyword: str, size: int = 5, read_body: bool = False,
             from_cache = bool(found.get("_from_cache"))
 
     nat = None
+    nat_error = ""
     if channel == "auto" and not results:
         nat = search_native(keyword, size=size, session=session)
     elif channel == "native":
@@ -744,9 +765,14 @@ def search_shui5(keyword: str, size: int = 5, read_body: bool = False,
         results = nat["results"]
         used = "站内" if results else ""
         note = nat.get("_filter_note", "")
+        # 站内那一路判出断供时必须原样接出去：包装层只把"两路都没取到"写成 _error，
+        # 断供恰恰发生在取到了半截的时候（results 非空），不接就成了无痕丢数。
+        nat_error = nat.get("_error", "")
 
     err = ""
-    if not results:
+    if nat_error:
+        err = nat_error
+    elif not results:
         failed = {k: v for k, v in channels.items() if v.startswith("没走成") or v.startswith("被拦")}
         if failed:
             err = "两条检索通道都没取到：" + "；".join(f"{k} {v}" for k, v in failed.items())
