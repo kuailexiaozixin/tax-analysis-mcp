@@ -226,15 +226,22 @@ def read_article(url: str) -> tuple[str, str]:
     if r.status_code != 200:
         return "", f"HTTP {r.status_code}"
 
+    # 实测（2026-11-23）：这道墙是 IP/环境级验证码门，HTTP 全程 200，只靠状态码与正文
+    # 关键词都判不出来——用本模块的手机版 UA 取回的那份落地页里，"环境异常/验证/去验证/
+    # tcaptcha" 一个都不出现（正文只有视频/小程序/赞等壳文案），所以早先按正文关键词的
+    # 分支实际从不命中，验证码门被误报成"未找到正文容器"。可靠信号是**落地 URL**：
+    # 302 到 /mp/wappoc_appmsgcaptcha（requests 跟随重定向后 r.url 即是）。
+    # 真实浏览器（Edge over CDP）打开同一枚签名 URL 也被 302 到同一处，故"换浏览器就能
+    # 取正文"是错的；无登录态/未人工过验证时正文取不到，只能降级用检索摘要。
+    if "appmsgcaptcha" in r.url:
+        return "", "微信验证码门（落地 wappoc_appmsgcaptcha，HTTP 200 非正文）：需登录态或人工过验证，浏览器同样被拦，降级用检索摘要"
+
     m = re.search(r'<div[^>]*id="js_content"[^>]*>(.*?)</div>\s*(?:<script|</div>)',
                   r.text, re.DOTALL)
     if not m:
         if "环境异常" in r.text or "验证" in r.text:
-            # 实测（2026-11-23）：这条墙是 IP/环境级验证码门——真实浏览器（Edge over CDP）
-            # 打开同一枚签名 URL 也被 302 到 /mp/wappoc_appmsgcaptcha，落地页带
-            # tcaptcha_iframe_dy 与「去验证」，HTTP 全程 200。所以"换浏览器就能取正文"
-            # 是错的，这里不能那样写；无登录态/未过验证时正文就是取不到。
-            return "", "微信返回验证页（环境异常 tcaptcha），需登录态或人工过验证，浏览器同样被拦"
+            # 正文关键词只在别的 UA/别的落地页形态下出现，留作兜底，不再是主判据。
+            return "", "微信返回验证页（正文含环境异常/验证），需登录态或人工过验证，浏览器同样被拦"
         return "", "未找到正文容器 js_content"
 
     body = m.group(1)
