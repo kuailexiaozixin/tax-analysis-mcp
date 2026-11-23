@@ -941,8 +941,18 @@ def _is_nav_placeholder(name: str) -> bool:
 
 
 def update_columns(session: requests.Session | None = None,
-                   max_nodes: int = 120) -> list:
-    """重建 data/ctax_columns.json：首页导航 → 每个 id 一次空词检索取行数与行内栏目名，
+                   max_nodes: int = 120) -> tuple[list, str]:
+    """重建 data/ctax_columns.json，交回 `(栏目行, 这一轮没收全的说明)`，说明为空串=没收全的档没发生。
+
+    三个计数与落盘行数都看不见下面这三档，所以必须由调用方（命令行）把这句说明打在
+    「重建完成」那句里，否则就是把「这一轮没取全」说成「全站就这些栏」（红线⑦）：
+      1. 首页取不到 —— 这一轮**根本没重建**，交回的还是上一轮的旧表；
+      2. 父栏目页取页异常或非 200 —— 那一枚父栏目的子栏一枚都没探测到（实测：健康第一页
+         10/10 全 200，所以这一档判得出来；但 node_1269 健康 200 也交出 0 枚子栏链接，
+         所以「0 链接」不能当失败信号，判据只认异常与非 200）；
+      3. 撞到 `max_nodes` 上限没去展开的父栏目。
+
+    过程：首页导航 → 每个 id 一次空词检索取行数与行内栏目名，
     父栏目（空词回 0 行）再进它的栏目页把子节点多捞一层。
 
     栏目名有两个来源，优先级是实测出来的：行内 `nodesearchname` 是站点自己的叫法，
@@ -971,7 +981,9 @@ def update_columns(session: requests.Session | None = None,
         page = _http_get(CTAX_BASE + "/", timeout=TIMEOUT_READ, session=s).text
     except Exception as e:  # noqa: BLE001
         print("首页取不到，栏目表没有重建：%s" % e, file=sys.stderr)
-        return load_columns()
+        # 这一轮根本没重建，交回的是上一轮的旧表：必须说明，否则调用方把旧行数
+        # 当成"这一轮取到的行数"（红线⑦）。
+        return load_columns(), "首页取不到（%s），这一轮没有重建，交回的是上一轮的旧表" % e
     nav, navname = _nav_from_page(page)
     probed = {}
     spent = 0
@@ -1003,15 +1015,32 @@ def update_columns(session: requests.Session | None = None,
         if c:
             probed[nid] = c
 
-    # 父栏目往下捞一层：这一轮用展开前的快照，孙辈不再展开（政策那一簇两层就够）
-    for nid in [n for n, c in probed.items() if c["parent"] and c["dir"]]:
+    # 父栏目往下捞一层：这一轮用展开前的快照，孙辈不再展开（政策那一簇两层就够）。
+    # 展开失败要留名：这一页整批子栏一个都探测不到，却与"这栏本来没有子栏"不可分——
+    # 2026-11-24 实测：健康父栏目页 10/10 全 200，其中 node_1269 一枚子栏链接都没有
+    # 且页面无错误字样（健康≠必有子栏）；同一栏目第 11 页 HTTP 500、572 字节、
+    # 也是 0 链接。所以"0 链接"不能当失败信号，只能认异常与非 200 状态码。
+    expand_list = [n for n, c in probed.items() if c["parent"] and c["dir"]]
+    expand_failed, expand_pending = [], []
+    for nid in expand_list:
         if spent >= max_nodes:
-            break
-        try:
-            p2 = _http_get(column_page_url(nid, dir_=probed[nid]["dir"]),
-                           timeout=TIMEOUT_READ, session=s).text
-        except Exception:  # noqa: BLE001
+            # 探测上限先到：这枚父栏目根本没去展开，孙辈一个都没探测，也得留名。
+            expand_pending.append(nid)
             continue
+        try:
+            r2 = _http_get(column_page_url(nid, dir_=probed[nid]["dir"]),
+                           timeout=TIMEOUT_READ, session=s)
+        except Exception as e:  # noqa: BLE001
+            expand_failed.append("%s（%s）：%s"
+                                 % (nid, probed[nid]["name"] or "名字没取到",
+                                    type(e).__name__))
+            continue
+        if r2.status_code != 200:
+            expand_failed.append("%s（%s）：HTTP %s"
+                                 % (nid, probed[nid]["name"] or "名字没取到",
+                                    r2.status_code))
+            continue
+        p2 = r2.text
         child_nav, child_name = _nav_from_page(p2)
         time.sleep(READ_INTERVAL)
         for cid in child_nav:
@@ -1036,6 +1065,22 @@ def update_columns(session: requests.Session | None = None,
           % (spent, len(probed), len(out), len(drop_no_name)), file=sys.stderr)
     if drop_no_name:
         print("  没进表的节点：" + "、".join(drop_no_name), file=sys.stderr)
+    # 展开失败的父栏目必须逐枚点名：这一档三个自洽计数全看不见（探测次数没涨），
+    # 只看 stderr 会把 11 栏的表当成"全站就这 11 栏"。
+    if expand_failed:
+        print("  %d 枚父栏目的子栏一个都没探测到（取页异常或非 200），表里不含这些子栏：%s"
+              % (len(expand_failed), "；".join(expand_failed)), file=sys.stderr)
+    if expand_pending:
+        print("  探测上限先到，%d 枚父栏目没去展开，表里不含它们的子栏：%s"
+              % (len(expand_pending), "、".join(expand_pending)), file=sys.stderr)
+    notes = []
+    if expand_failed:
+        notes.append("%d 枚父栏目取页异常或非 200、其子栏一枚都没探测到（%s）"
+                     % (len(expand_failed), "；".join(expand_failed)))
+    if expand_pending:
+        notes.append("探测上限 %d 先到、%d 枚父栏目没去展开（%s）"
+                     % (max_nodes, len(expand_pending), "、".join(expand_pending)))
+    incomplete = "；".join(notes)
     COLUMNS_FILE.parent.mkdir(exist_ok=True)
     payload = json.dumps(
         {"_note": "由 scripts/tax_ctax.py --update-columns 生成；parent=True 的行只能"
@@ -1043,7 +1088,7 @@ def update_columns(session: requests.Session | None = None,
                   "name 优先取行内 nodesearchname，父栏目取导航锚文本",
          "columns": out}, ensure_ascii=False, indent=1)
     COLUMNS_FILE.write_text(payload + chr(10), encoding="utf-8")
-    return out
+    return out, incomplete
 
 
 def _nav_from_page(page: str) -> tuple:
@@ -1113,8 +1158,14 @@ def main(argv=None) -> int:
             print("栏目表是空的，先跑 --update-columns")
         return 0
     if a.update_columns:
-        cols = update_columns(session=s)
-        print(f"重建完成：{len(cols)} 个节点，其中 {sum(1 for c in cols if c.get('parent'))} 个父栏目")
+        cols, incomplete = update_columns(session=s)
+        n_parent = sum(1 for c in cols if c.get("parent"))
+        if incomplete:
+            # 有档没收全就不能说"重建完成"：那会把"这一轮没取全"说成"全站就这些栏"。
+            print(f"这一轮取回 {len(cols)} 个节点（{n_parent} 个父栏目），"
+                  f"但没收全：{incomplete}")
+        else:
+            print(f"重建完成：{len(cols)} 个节点，其中 {n_parent} 个父栏目")
         return 0
 
     if a.list:
