@@ -867,6 +867,12 @@ def search_tax(keyword: str, *,
                              json={**payload, "pageSize": fetch_size})
             extra.raise_for_status()
             extra_outer = extra.json()
+            # 同一个端点、同一个方法、同一份载荷（只多一个 pageSize），信封形状与主检索
+            # 逐字相同——主路已在上面判过业务码，这里若不判，加宽这一轮失败就会被
+            # get("rows", …) 静默读成"没有更多候选"：不报错、也不加宽，而加宽存在的
+            # 理由正是救标题排序，于是排序照旧偏、且没有任何痕迹说它没跑成。
+            # 判据仍用共享的那一份，不在此另写。
+            tax_http.require_npc_ok(extra_outer)
             extra_outer = extra_outer.get("data", extra_outer)
             extra_rows = extra_outer.get("rows", extra_outer.get("list", []))
             have = {r.get("bbbs", "") for r in rows}
