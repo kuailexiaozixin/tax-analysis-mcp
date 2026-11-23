@@ -422,6 +422,7 @@ def search_ctax(keyword: str, size: int = 5, *, node=None, date_from: str = "",
     # 正常一词仍在一到两次请求内退出（收满即 break，取到 total 也 break）。
     cap_pages = SEARCH_MAX_PAGES
     got, pages_read, total, status, stopped_by = [], 0, None, "", ""
+    dropout = False
     page = 1
     while page <= cap_pages:
         params["pageNo"] = page
@@ -436,6 +437,19 @@ def search_ctax(keyword: str, size: int = 5, *, node=None, date_from: str = "",
         total = j.get("foundNum")
         pages_read += 1
         if not rows:
+            # 2026-11-24 实测（.tmp-inspect\ctax_fullend_control.py）：这一路
+            # foundNum 诚实——「财政部 税务总局公告2026年第29号」foundNum=4 收到 4、
+            # 「关税税则委员会 2024」foundNum=6 收到 6，两词都没等到空页就按
+            # got>=total 正常收口；真没有命中的词首页即空且 foundNum=0。
+            # 站点不会在吐满之前给空页，所以"还有没取到却给了空页"只可能是断供，
+            # 不能当列表尽头——旧写法在这里 break 后走到下面 fetch_all 那一支，
+            # 报的是"已到页数上限 40 页"，而实际只翻到第 2 页：既把没取到说成取完，
+            # 又给出一句不成立的原因。
+            if total is not None and int(total) > 0 and len(got) < int(total):
+                status = (f"第 {page} 页返回空，但站点报这一词共 {total} 条、"
+                          f"只收了 {len(got)} 条：清单源实测不会在吐满前给空页，"
+                          f"这一页判为断供，交回的 {len(got)} 条不是这一词的完整集合")
+                dropout = True
             break
         got += [_row_from_json(a) for a in rows]
         page += 1
@@ -470,6 +484,11 @@ def search_ctax(keyword: str, size: int = 5, *, node=None, date_from: str = "",
         status += (f"；本轮取回的 {len(got)} 行里合并同一篇挂多栏的行 {merged} 行"
                    f"（判据见 dedup_rows，交回的篇数按 want 截过，这一行按截之前全量计）")
     out = {"results": uniq, "total": total, "_status": status, "_pages": pages_read}
+    if dropout:
+        # 聚合层（tax_aggregator.py:381）只认 _error 才把"这一源少了一段"
+        # 记进 errors；不给 _error，中途断供就只留在 _status 里，而
+        # source_summary 会把这一源报成"0 条/几条"——把没取到说成没有。
+        out["_error"] = status
     if notes:
         out["_filter_note"] = "；".join(notes)
     return out
