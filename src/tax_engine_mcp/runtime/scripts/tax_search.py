@@ -802,26 +802,13 @@ def search_tax(keyword: str, *,
     outer = data.get("data", data)
 
     # NPC 的业务状态码挂在 JSON 里，HTTP 层永远是 200：实测正常回的是
-    # {"total":36,"rows":[…],"code":200,"msg":"查询成功",…}，而出错时回的是
+    # {"total":36,"rows":[…],"code":200,"msg":"查询成功"}，出错时回的是
     # {"msg":"系统异常","code":500}（拼错字段名、发 GET、发 form-urlencoded 都是这一类）。
     # 两者 HTTP 都是 200、都能 .json() 成功，若不判 code，错误信封会被下面的
-    # get("total",0)/get("rows",[]) 静默读成"0 条命中"——把接口报错说成"查无此法"，
-    # 正是本层一直防的"2xx 不证明成功"。判据按实测信封：只在 code 存在且不是 200 时报，
-    # 缺 code 的老式信封（{"total":…,"rows":[…]}）照旧放行，不误伤。
-    _code = data.get("code")
-    if _code is not None:
-        # 归一化再比：实测正常回的是整数 200，但"200"这种字符串形态若哪天出现，
-        # 直接 != 200 会对健康响应发假警——那正是本段要修的同一类误判，不能自己再造一个。
-        try:
-            _code_norm = int(str(_code).strip())
-        except (TypeError, ValueError):
-            _code_norm = _code      # 非数字形态留着，下面按"不是 200"处理
-        if _code_norm != 200:
-            raise RuntimeError(
-                f"NPC 检索接口回 HTTP 200 但业务失败（code={_code}，"
-                f"msg={str(data.get('msg'))[:80]!r}，{len(r.content)} 字节）："
-                f"这不是\"没有命中\"，是请求本身没被接受；"
-                f"常见原因是载荷字段名或 Content-Type 不对，别把它当空结果往下答。")
+    # get("total",0)/get("rows",[]) 静默读成"0 条命中"——把接口报错说成"查无此法"。
+    # 判据收在 tax_http.npc_business_error，与详情、下载共用同一份：各处各抄一遍
+    # 正是本仓反复踩的"三处重复必漂移"，也是 short_reason 当初进那一层的理由。
+    tax_http.require_npc_ok(data)
 
     total = outer.get("total", 0)
     rows = outer.get("rows", outer.get("list", []))

@@ -129,6 +129,12 @@ def fetch_detail(bbbs_id: str) -> dict:
             f"NPC 详情接口返回的不是 JSON（HTTP {r.status_code}，"
             f"Content-Type {r.headers.get('Content-Type')}，"
             f"{len(r.content)} 字节）：{r.text[:120]!r}；原异常 {e}") from e
+    # 实测正常信封是 {"msg":"操作成功","code":200,"data":{…}}，出错是
+    # {"msg":"系统异常","code":500} 而 HTTP 仍 200。不判这一层，下面 detail.get("title","")
+    # 会把接口报错读成空标题，再被调用方（preview_law）翻成 ValueError("Law not found")——
+    # 等于把"没取到"说成"这份法规不存在"，正是红线⑦禁的事。判据与检索、下载共用
+    # tax_http.npc_business_error 那一份，不在此另写。
+    tax_http.require_npc_ok(data)
     detail = data.get("data", data)
     oss = detail.get("ossFile") or {}
 
@@ -156,7 +162,12 @@ def fetch_detail(bbbs_id: str) -> dict:
         "_from_cache": False,
     }
 
-    _detail_cache.set(cache_key, result)
+    # 空标题就是"这次没取到"，不是"这份法规没有标题"。把它落进缓存，等于把一次
+    # 抖动钉住整个 TTL：之后每一轮都直接回放这份空壳，连重试的机会都没有，而
+    # preview_law 会把它翻成 ValueError("Law not found")——一次网络问题被说成
+    # 法规不存在，且此后无法自证。只缓存真取到的那一版。
+    if result["title"]:
+        _detail_cache.set(cache_key, result)
     return result
 
 
@@ -195,6 +206,11 @@ def get_download_url(bbbs_id: str, fmt: str = "docx") -> Optional[str]:
     url = f"{BASE_URL}/law-search/download/pc?format={fmt}&bbbs={bbbs_id}"
     r = _request(url)
     data = r.json()
+    # 实测正常回 {"msg":"操作成功","code":200,"data":{"urlIn":…,"url":…}}；出错时 HTTP 仍 200、
+    # 只把失败写进 code。不判这一层，data.get("data",{}).get("url") 会回 None，
+    # 与"这份法规确实没有该格式的附件"长得一模一样（真无附件时也是 code=200）。
+    # 判据与检索、详情共用 tax_http 那一份。
+    tax_http.require_npc_ok(data)
     return data.get("data", {}).get("url")
 
 

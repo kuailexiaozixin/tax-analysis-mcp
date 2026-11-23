@@ -46,6 +46,11 @@ attempt() 管的是第三件事："失败要不要再发一次、发过几次要
 台账与重试，不必把各自的 Session 形状搬进这一层。TLS 熔断名单是进程内状态，
 与串行闸的跨进程状态刻意分开：证书链坏了是本机这一趟的事，不该由一个锁文件
 替所有进程决定。
+
+npc_business_error()/require_npc_ok() 管第四件事："状态码没说话、正文里才有的失败"。
+NPC 三个接口出错时 HTTP 仍是 200，只把失败写在 JSON 的 code/msg 里；判据一旦各写
+一份，早晚会有一处漏掉（本层正是为 short_reason 的"三处重复必漂移"而立）。它不碰
+requests，只读已经解析好的 dict，所以自管 Session 的模块照样能共用。
 """
 
 import os
@@ -54,6 +59,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from typing import Optional
 from urllib.parse import urlparse
 
 import requests
@@ -441,3 +447,38 @@ def short_reason(exc: Exception, limit: int = 90) -> str:
     if len(text) > limit:
         text = text[:limit].rsplit(" ", 1)[0]      # 不在词中间切断
     return f"{type(exc).__name__}：{text}"
+
+
+def npc_business_error(data: dict) -> Optional[str]:
+    """判一个 HTTP 200 的 NPC 信封是不是业务失败。是，就回一句带原因的话；不是，回 None。
+
+    实测（2026-11-23）：NPC 检索正常回 {"total":36,"rows":[…],"code":200,"msg":"查询成功"}，
+    详情回 {"msg":"操作成功","code":200,"data":{…}}，下载回 {"msg":"操作成功","code":200,"data":{"urlIn","url"}}；
+    出错时统一回 {"msg":"系统异常","code":500}——HTTP 永远 200、raise_for_status 全过得去，
+    .json() 也成功，于是 get("total",0)/get("rows",[]) 这类兜底把它静默读成"0 条命中/
+    这份没有文件"，把接口报错说成"查无此法"。健康信封自己也带 code/msg，所以判据只能是
+    "code 存在且归一化后 != 200"，不能是"带 code 就算错"（会把每条正常响应拦掉），
+    也不能写成 `if code and code != 200`（code=0 是 falsy，会漏判）。
+    归一化先转 int 再比：哪天冒出 "200" 字符串形态，直接 != 200 会对健康响应发假警——
+    那正是本函数要防的同一类误判，不能自己再造一个。信封没有 code 键的照旧放行。
+    """
+    code = data.get("code") if isinstance(data, dict) else None
+    if code is None:
+        return None
+    try:
+        norm = int(str(code).strip())
+    except (TypeError, ValueError):
+        norm = code      # 非数字形态按"不是 200"处理
+    if norm == 200:
+        return None
+    return (f"NPC 回 HTTP 200 但业务失败（code={code}，"
+            f"msg={str(data.get('msg'))[:80]!r}）：这不是「没有命中/没有文件」，"
+            f"是请求本身没被接受；常见原因是载荷字段名或 Content-Type 不对，"
+            f"别把它当空结果往下答。")
+
+
+def require_npc_ok(data: dict) -> None:
+    """npc_business_error 的抛错版：给"空结果必须能跟接口失败分开"的取数路径用。"""
+    reason = npc_business_error(data)
+    if reason:
+        raise RuntimeError(reason)
