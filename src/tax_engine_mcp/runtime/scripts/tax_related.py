@@ -92,14 +92,25 @@ def practice_source_name(domain: str, title: str) -> str:
     return ""
 
 
-def search_practice_sources(query: str, n: int = 3) -> list[dict]:
-    """税屋与微信公众号的实务解读；两源各取 n 条后按 URL 去重。"""
+def search_practice_sources(query: str, n: int = 3) -> tuple[list, str]:
+    """税屋与微信公众号的实务解读；两源各取 n 条后按 URL 去重。
+
+    返回 (结果, 取数说明)。说明非空表示这一路里至少有一个源没取到数据，
+    调用方不能把 0 条当成"网上没有解读"——判据与 `search_web_broad` 那条
+    完全同形，此前只有全网那一路有通道：两源各自的 `_error` 在下面的循环里
+    被丢掉了，实务全被拦时 `collect_related` 交回 total=0 且不带任何说明，
+    网页与命令行都读成"确实没有实务解读"。那是红线⑦（把没取到说成没有）。
+    """
     results = []
     seen = set()
+    notes = []
 
     for name, data in [("税屋", search_shui5(query, size=n)),
                        ("微信公众号", search_wechat(query, size=n))]:
-        for item in (data or {}).get("results", []):
+        data = data or {}
+        if data.get("_error"):
+            notes.append(f"{name}：{data['_error']}")
+        for item in data.get("results", []):
             href = item.get("url", "")
             if not href or href in seen or is_garbage_result(href, item.get("title", "")):
                 continue
@@ -112,7 +123,7 @@ def search_practice_sources(query: str, n: int = 3) -> list[dict]:
                 "source_label": name,
                 "snippet": (item.get("snippet") or item.get("content", ""))[:180],
             })
-    return results
+    return results, "; ".join(notes)
 
 
 def search_web_broad(query: str, n: int = 8) -> tuple[list, str]:
@@ -155,7 +166,9 @@ def collect_related(law_title: str, keyword: str = "", *,
 
     practice_fetch / web_fetch 只给测试与 Flask 的现有打桩点留入口；不传时
     用本模块的两条真实检索。两路并发跑，任意一路抛异常都只让那一路上报，
-    另一路照常返回。
+    另一路照常返回。两路都交回 (条目, 取数说明) 二元组，形状一致；桩形与
+    真实返回形不一致会让这一路在测试里永远绿（见 `test_server_routes` 的
+    `test_broad_web_survives_to_the_payload` 记的那次错位）。
     """
     fetch_practice = practice_fetch or search_practice_sources
     fetch_web = web_fetch or search_web_broad
@@ -171,9 +184,9 @@ def collect_related(law_title: str, keyword: str = "", *,
         except Exception:
             web_items, web_error = [], ""
         try:
-            practice_items = future_practice.result(timeout=20)
+            practice_items, practice_error = future_practice.result(timeout=20)
         except Exception:
-            practice_items = []
+            practice_items, practice_error = [], ""
 
     sources = []
     seen = set()
@@ -192,6 +205,9 @@ def collect_related(law_title: str, keyword: str = "", *,
         "sources": sources,
         "searched_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
-    if web_error:
-        payload["engine_error"] = web_error
+    # 两路的取数说明并成一格：只挂全网那一枚时，实务两源全被拦的轮次交回
+    # total=0 且不带任何说明，网页与命令行只能读成"网上没有解读"（红线⑦）。
+    notes = [n for n in (practice_error, web_error) if n]
+    if notes:
+        payload["engine_error"] = "; ".join(dict.fromkeys(notes))
     return payload
