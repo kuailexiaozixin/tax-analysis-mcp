@@ -401,7 +401,7 @@ def _topic_terms(terms: dict) -> list:
     return out
 
 
-def locate_cited_document(title: str, size: int = 6) -> tuple:
+def locate_cited_document(title: str, size: int = 6) -> tuple[list, list, str]:
     """按用户点名的文件标题在总局法规库里定位这一份文件。
 
     检索词由长到短依次试，全部试完再把各次结果合在一起按标题命中率排。
@@ -418,7 +418,22 @@ def locate_cited_document(title: str, size: int = 6) -> tuple:
     判过关系的排在没判过的之前，调用方只认 rows[0] 带标记的那一条。
 
     Returns:
-        (按标题命中率降序的条目列表, 实际试过的检索词)
+        (按标题命中率降序的条目列表, 实际试过的检索词, 这一轮"没捞到"到底是哪一种
+        没捞法)
+
+    第三枚形如 `"<档位>"` 或 `"<档位>｜<逐枚原因>"`，档位四取、互斥：
+      ""                各枚候选词都取成了
+      "partial"         有候选词没取成，但剩下的取到了条目——这一轮的清单可能不完整
+      "channel-failed"  零条目，且每一次检索都失败（异常、HTTP 500、断供、被拦）
+      "no-hit"          零条目，且检索都成功、站点诚实报每一枚词都 0 条
+
+    为什么非要把 "channel-failed" 与 "no-hit" 分开：这两档对读者是两个完全不同的
+    结论——前者要重跑这一轮，后者要换题名或改用别的源；混成一句就是把"没连上"
+    说成"库里没有"（红线⑦）。而旧实现连分都分不出来：`search_fgk` 网络失败时
+    不抛异常、只交回 _error+_fetch_failed（它全文没有 raise），循环里既不看异常
+    也不看这两枚键，于是零条目时与诚实 0 命中在输出面上逐字相同，compose 只能
+    给出那句"召回的标题都只是在字面上含住这几个字"——一条都没召回时，那是关于
+    站点行为的假陈述，比沉默更糟。
     """
     # 缓存优先：这份点名的文件以前核实过原文地址（按文号存），直接复用、不打网络。
     # 复用的前提仍是"标题确实是被点名的那一份"——缓存只记文号→链接，认不认还得靠
@@ -432,15 +447,30 @@ def locate_cited_document(title: str, size: int = 6) -> tuple:
             if TT.title_identity(title, title) == "same":
                 row.update({"_title_match": 1.0, "_is_interpretation": False,
                             "_cited_identity": "same", "_from_cache": True})
-                return [row], [dn]
+                return [row], [dn], ""
 
-    rows, tried = {}, []
+    rows, tried, attempts = {}, [], []
     for cand in TT.title_candidates(title):
         tried.append(cand)
         try:
             r = FGK.search_fgk(cand, size=size)
-        except Exception:
+        except Exception as e:
+            # 这一枚候选词抛了异常（超时、断连）。旧写法直接 continue，事后谁也
+            # 说不出"没定位到"是因为库里没有还是因为我们没连上——先记档。
+            attempts.append({"keyword": cand, "outcome": "exception",
+                             "reason": type(e).__name__})
             continue
+        if r.get("_fetch_failed") or r.get("_error"):
+            # 检索入口失败时不抛异常，而是交回 _error/_fetch_failed（tax_fgk 全文
+            # 没有 raise）。失败那一档仍可能带条目（3.62.12 的断供就带着已收到的
+            # 那几条），所以记档之后照常合并，绝不因为"这一枚失败了"把已有的行丢掉。
+            attempts.append({"keyword": cand, "outcome": "failed",
+                             "reason": r.get("_error") or "取数失败"})
+        elif not r.get("results"):
+            attempts.append({"keyword": cand, "outcome": "empty",
+                             "reason": r.get("_empty_reason") or ""})
+        else:
+            attempts.append({"keyword": cand, "outcome": "rows", "reason": ""})
         for row in r.get("results", []):
             url = row.get("url") or ""
             if url and url not in rows:
@@ -468,7 +498,25 @@ def locate_cited_document(title: str, size: int = 6) -> tuple:
         top_dn = top.get("document_number") or TT.doc_number_of(top.get("title", ""))
         if top_dn and CITED.is_official(top.get("url", "")):
             CITED.put_cited_link(top_dn, top["url"], CITED_CACHE_PATH)
-    return out[:size], tried
+    # 把逐枚候选词的台账折成一档状态，附带给人看的原因摘要（compose 只认「｜」
+    # 之前的档位词，后面那截是给读者的）。判定顺序即优先级：只要取到了条目就不算
+    # "这一轮没捞着"（partial 那一档另有用途——它说这一轮的清单可能还不完整）；
+    # 零条目时才区分"每次都失败"与"每次都诚实报 0 条"，这两句必须分开。
+    def _why(a):
+        return "%s：%s" % (a["keyword"], a["reason"] or "未注明")
+
+    bad = [a for a in attempts if a["outcome"] in ("exception", "failed")]
+    empty = [a for a in attempts if a["outcome"] == "empty"]
+    if out:
+        state = "" if not bad else "partial｜" + "；".join(_why(a) for a in bad)
+    elif bad:
+        # 有失败也有诚实 0 条时按更重的那档报：说不清是哪一枚该负责，宁可说
+        # "这一轮没连上"（该重跑），也不说"库里没有"（该改用别的题名）。
+        state = "channel-failed｜" + "；".join(_why(a) for a in bad)
+    else:
+        # 每一枚都成功而零条目（或一枚候选词都没发出去）：库里确实没有。
+        state = "no-hit｜" + "；".join(_why(a) for a in empty)
+    return out[:size], tried, state
 
 
 def corroborate_validity_from_target(evidence: list, at: str = "") -> list:
@@ -776,15 +824,21 @@ def gather(question: str, at: str = "", read_body: bool = True,
     seen, evidence, errors, rounds_done = set(), [], [], []
     cited = terms.get("cited") or []
     cited_located = False
+    cited_state = ""
     if cited:
         # 用户点名了文件，先按标题把这一份文件本身捞出来排在证据最前，
         # 后面各轮取回的上位法与配套规定当其余法定依据，不抢它的位置。
-        rows, tried = locate_cited_document(cited[0]["title"])
+        rows, tried, cited_state = locate_cited_document(cited[0]["title"])
         terms["cited_candidates"] = tried
         # 只有标题确实就是被点名那一份才认目标。实测点名「税收征管法」时
         # 字面命中率 1.0 的那条是国税发〔2001〕110号——它在标题里引用了这部法，
         # 一旦当上主依据，现行有效的法律就被挤到后面那一栏。
         cited_located = bool(rows) and bool(rows[0].get("_cited_identity"))
+        if cited_state.startswith("channel-failed"):
+            # 定位这一轮根本没连上：进 errors 这条既有通道（CLI/前端都会显出来），
+            # 免得下面把它算成"库里没有这一份"。
+            errors.append("点名文件定位失败（检索通道未取成）："
+                          + cited_state.split("｜", 1)[-1])
         for i, row in enumerate(rows):
             url = row.get("url") or ""
             if not url or url in seen:
@@ -864,9 +918,11 @@ def gather(question: str, at: str = "", read_body: bool = True,
     plan["citation_check"] = citation_check
     plan["at"] = at
     plan["terms"] = terms
-    # 点名了文件但库里没捞到那一份：compose 要把这件事说明白，不能拿同域文件顶位
+    # 点名了文件但库里没捞到那一份：compose 要把这件事说明白，不能拿同域文件顶位。
+    # cited_state 一并透出：compose 要靠它把"没连上"与"库里没有"分开说话。
     if cited:
         plan["cited_located"] = cited_located
+        plan["cited_state"] = cited_state
     plan["gathered_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
     return plan
 
@@ -913,13 +969,42 @@ def compose(plan: dict) -> dict:
     else:
         primary = E.pick_primary(ev)
         if plan.get("cited_located") is False:
-            # 点名了文件、但召回的没有一份是它：不能装作没听见这个点名，
-            # 也不能把同域文件当它用——只说清"没定位到"和"现在给的是什么"。
+            # 点名了文件、但没定位到它。旧写法只有一句话，把三档不同的成因说成
+            # 同一种：「召回的标题都只是在字面上含住这几个字」——可是一条都没召回时
+            # 这句就是假陈述（没有"召回的标题"可供判断）。按 locate 交回的档位分开。
             want = ((plan.get("terms") or {}).get("cited") or [{}])[0].get("title", "")
-            cited_note = (
-                f"点名的《{want}》没有定位到同一份文件：召回的标题都只是在字面上"
-                f"含住这几个字（包括在书名号里引用它的），按 ⑦ 不能顶替被点名的那份。"
-                f"下面的主依据按主题分层给出，答案要写明点名文件待核")
+            state = str(plan.get("cited_state") or "")
+            stage, _, why = state.partition("｜")
+            if stage == "channel-failed":
+                # 每一枚候选词都没取成：这是我们的通道问题，不是站点的库存问题。
+                cited_note = (
+                    f"点名的《{want}》这一轮没有定位到，原因是检索通道没取成"
+                    f"（{why or '未注明原因'}），不是库里没有这一份：按 ⑦ 不能把"
+                    f"没连上写成没有。下面的主依据按主题分层给出，答案要写明"
+                    f"点名文件本轮未取到、需重跑这一轮")
+            elif stage == "no-hit":
+                cited_note = (
+                    f"点名的《{want}》在总局法规库里按题名逐枚试检都是 0 条"
+                    f"（{why or '未注明原因'}）：这一串字面库里没有，可能是题名缺"
+                    f"发文机关前缀、用了简称或本就不在这座库里。按 ⑦ 不能拿同域"
+                    f"文件顶替被点名的那份，答案要写明点名文件未命中、建议改用文号"
+                    f"或完整题名再查")
+            elif stage == "partial":
+                # 召回到条目、但没有一份判得过"就是这一份"，同时有候选词没取成：
+                # 那句"召回的标题都只是在字面上含住这几个字"仍然为真，但必须补上
+                # 这一轮并不完整——目标可能恰好在没取成的那一枚词底下。
+                cited_note = (
+                    f"点名的《{want}》没有定位到同一份文件：召回的标题都只是在字面上"
+                    f"含住这几个字（包括在书名号里引用它的），按 ⑦ 不能顶替被点名的那份。"
+                    f"且这一轮有几枚检索词没取成（{why or '未注明原因'}），"
+                    f"目标可能落在没取成的那几枚底下。下面的主依据按主题分层给出，"
+                    f"答案要写明点名文件待核、这一轮检索不完整")
+            else:
+                # 召回到条目，但没有一份判得过"就是这一份"——旧那句在这一档为真。
+                cited_note = (
+                    f"点名的《{want}》没有定位到同一份文件：召回的标题都只是在字面上"
+                    f"含住这几个字（包括在书名号里引用它的），按 ⑦ 不能顶替被点名的那份。"
+                    f"下面的主依据按主题分层给出，答案要写明点名文件待核")
 
     # 主依据那一行不再进后面的栏，否则同一份文件在输出里出现两次，
     # 一次标"主依据"一次标"其余依据"。NPC 那条链路不带 url，所以
