@@ -230,7 +230,11 @@ def read_article(url: str) -> tuple[str, str]:
                   r.text, re.DOTALL)
     if not m:
         if "环境异常" in r.text or "验证" in r.text:
-            return "", "微信返回验证页，正文需浏览器环境"
+            # 实测（2026-11-23）：这条墙是 IP/环境级验证码门——真实浏览器（Edge over CDP）
+            # 打开同一枚签名 URL 也被 302 到 /mp/wappoc_appmsgcaptcha，落地页带
+            # tcaptcha_iframe_dy 与「去验证」，HTTP 全程 200。所以"换浏览器就能取正文"
+            # 是错的，这里不能那样写；无登录态/未过验证时正文就是取不到。
+            return "", "微信返回验证页（环境异常 tcaptcha），需登录态或人工过验证，浏览器同样被拦"
         return "", "未找到正文容器 js_content"
 
     body = m.group(1)
