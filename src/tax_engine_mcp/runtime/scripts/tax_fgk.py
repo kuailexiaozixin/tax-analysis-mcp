@@ -854,6 +854,15 @@ def search_fgk(keyword: str, size: int = 10, with_body: bool = False,
         key_parts.append(token)
     cache_key = _cache._key(*key_parts)
     result = _cache.get(cache_key, max_age=CACHE_TTL)
+    if result is not None and any(k in result for k in ("_fetch_failed",
+                                                        "_empty_reason",
+                                                        "_search_failed")):
+        # 读侧不赌写侧永远正确：这条守卫是 3.62.17 才加的，旧版本写进盘上的失败存档
+        # 还在（实测：一次 HTTP 500 的轮次落盘 1 份，恢复后 _from_cache=True 回放同一
+        # 份残缺）。命中残缺就当作 miss —— 绝不回放。盘上那份不做写操作（CacheManager
+        # 只有整目录 clear()，没有单键删除）：这一轮取全时下面的 set 会用完整清单覆盖它，
+        # 这一轮也没取全时它最迟 CACHE_TTL 后过期，两种情况都不会再被读到。
+        result = None
     if result is not None:
         # 深拷贝，避免下面写 body 时污染缓存文件
         result = copy.deepcopy(result)
@@ -864,7 +873,18 @@ def search_fgk(keyword: str, size: int = 10, with_body: bool = False,
     else:
         result = _scan_list(keyword, size, max_pages, adaptive, filters,
                             file_only=file_only, order=order)
-        _cache.set(cache_key, result)  # 缓存的是"无正文"的清单
+        # 只缓存"取全了"的那一轮。这三枚键各自说明清单不完整：
+        #   _fetch_failed  —— 请求失败（含直达也没取回的那一档）；
+        #   _empty_reason  —— 接口报了命中数却没给清单，3.62.12 的中途断供也写它；
+        #   _search_failed —— 检索不通改按标识直达，手里那几条不是这一词的清单。
+        # CACHE_TTL 是一小时，把残缺写进去等于**把一次网络抖动钉住一小时**：之后
+        # 每一轮都 _from_cache=True 直接回放同一份残缺、连重试的机会都没有，上层
+        # 还会把它读成"库里只有这些"（红线⑦）。2026-11-24 实测四条出口的标记集：
+        # 取全轮三枚全无、合法的「翻完 N 页未筛出法规库条目」只带 _error（那是
+        # 一个完整可信的答案），两者都不受这条守卫影响，照常缓存。
+        if not any(k in result for k in ("_fetch_failed", "_empty_reason",
+                                         "_search_failed")):
+            _cache.set(cache_key, result)  # 缓存的是"无正文"的清单
 
     # 正文永远现拉，绝不缓存（避免引用过期条文）
     if with_body:
