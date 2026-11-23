@@ -633,6 +633,7 @@ def _scan_list(keyword: str, size: int, max_pages: int,
     total_hits = 0
     attempts = []           # 每一次网络尝试的四元组台账
     direct_note = ""
+    dropout = ""            # 中途空页判为断供时的话术（见循环内判据）
     for page in range(1, max(1, max_pages) + 1):
         found = search_chinatax(keyword, page=page, size=PAGE_SIZE,
                                 filters=filters, file_only=file_only,
@@ -647,6 +648,29 @@ def _scan_list(keyword: str, size: int, max_pages: int,
         page_items = found.get("results", [])
         pages += 1
         if not page_items:
+            # 空页在这一路有两种成因，实测能分开（2026-11-24 四词逐页量，
+            # `.tmp-inspect\fgk_page_honesty.py`）：「研发费用加计扣除」total=62
+            # 逐页 [10,10,10,10,10,10,2] 空页在第 8 页；「特别纳税调整实施办法」
+            # total=16 [10,6] 空页在第 3 页；「骗取出口退税」total=47 [10,10,10,10,7]
+            # 空页在第 6 页；「企业重组业务所得税处理」total=2 首屏 2 行、压根不发
+            # 第二页。四词都是"残页 → 空页"，空页页码恒等于 ceil(total/10)+1。
+            # 所以空页出现在 ceil(total/10) 之内，就不是这一词只有这些，而是这一页
+            # 没取到。旧写法在这里直接 break，交回的半截清单不带任何 _error（results
+            # 非空时走不到下面那几条出口），调用方拿到 total=已收条数、total_hits=站点
+            # 总数，两个数并排放着却不说话——正是红线⑦要拦的形状。
+            # 注意比较对象只能是"页码 vs total 推算的页数"，不能是 len(results) vs
+            # total_hits：results 只收带法规库标识的条目，total_hits 是这一档筛选下的
+            # 全部命中，两者本来就差几个量级（本模块 docstring 自述「小微企业」全站
+            # 4822 条、首屏十条无一条是文件），拿行数比总数会把每一轮都误报成断供。
+            # 第二个条件不能省：第 2 页起请求失败时 search_chinatax 交回的也是空
+            # results，会一并落到这一支；那一档的原因是"这一页没连上"，不是"站点
+            # 提前给了空页"，判成断供就是把我们的网络问题记到站点头上。
+            implied_pages = -(-int(total_hits) // PAGE_SIZE) if total_hits else 0
+            if implied_pages and page <= implied_pages and not found.get("_error"):
+                dropout = (f"第 {page} 页返回空，但站点报这一词共 {total_hits} 条、"
+                           f"按每页 {PAGE_SIZE} 条应有 {implied_pages} 页："
+                           f"清单源实测不会在吐满之前给空页，这一页判为断供，"
+                           f"交回的 {len(results)} 条法规库条目不是这一词的完整清单")
             break
         before = len(results)
         for item in page_items:
@@ -716,7 +740,16 @@ def _scan_list(keyword: str, size: int, max_pages: int,
     if file_only is False:
         result["label_scope"] = label_scope_text(file_only)
     # 检索本身失败要透出错误，不要和"库里没有"混为一谈
-    if first_error:
+    if dropout:
+        # 断供排在请求失败之前：这一档 HTTP 与 JSON 都正常、条目也真取到了，只是清单
+        # 没吐完。results 非空时下面几条出口一条都走不到，不写出去就是无痕丢数——
+        # 调用方拿到 total=已收条数与 total_hits=站点总数两个数并排放着却不说话。
+        # 同时写 _empty_reason：消费面 tax_answer.py:603 判的是 _fetch_failed 与
+        # _empty_reason 这两枚，只写 _error 那一轮会被读成"没有这份文件"而不是
+        # "这一轮没取完"。_fetch_failed 不写，因为已经取回的条目是真的。
+        result["_error"] = dropout
+        result["_empty_reason"] = dropout
+    elif first_error:
         result["_error"] = first_error
         result["_fetch_failed"] = True
         # 检索接口不通、但检索词里就带着法规库标识（形如 c100009/c5237365）：
