@@ -1027,6 +1027,10 @@ def resolve_column(name) -> dict | None:
     顺序：目录名（不分大小写）→ 导航名 → 短标签 → classid → 行内栏目名（只有唯一一栏命中才认）。
     归属的判据是行里的 `column` 字段，不是目录名：山西的目录是 `category_181`，
     而 `ShanXiShengCaiShuiFaGui` 这一栏的行名是陕西省法规，两个目录的文章链接集合重合 0 条。
+
+    classid 一律 `.get`：`build_column_table` 遇到取不到的栏会留下一行没有编号的行
+    （2026-11-24 实测：旧写法 `str(r["classid"])` 让这样一枚行污染整张表——按 classid
+    查任何一栏都抛 KeyError，连完好那几栏也查不了）。
     """
     rows = load_columns()
     key = str(name or "").strip()
@@ -1042,15 +1046,26 @@ def resolve_column(name) -> dict | None:
                 return r
     if key.isdigit():
         for r in rows:
-            if str(r["classid"]) == key:
+            cid = r.get("classid")
+            if cid is not None and str(cid) == key:
                 return r
     same = [r for r in rows if key in (r.get("columns") or [])]
     return same[0] if len(same) == 1 else None
 
 
 def classid_of(name) -> str:
+    """栏目任一种写法 → 站点认的 classid 字符串；这一栏没有可用编号时交回空串。
+
+    必须是空串而不是 `'None'`：`str(None)` 等于 "None"，是真值，旧写法会把它当有效
+    编号拼进 `classid_spec` 发出去（2026-11-24 实测：用户限「安徽,深圳」两栏，实际发出
+    `classid='None,12673'`，站点回"没有搜索到相关内容"，我们那句"两种成因分不开"
+    又把第三种成因——我们自己拼出来的 'None'——盖掉了）。
+    """
     r = resolve_column(name)
-    return str(r["classid"]) if r else ""
+    if not r:
+        return ""
+    cid = r.get("classid")
+    return "" if cid is None else str(cid)
 
 
 def classid_spec(spec) -> str:
@@ -1106,6 +1121,17 @@ def list_column(column, pages: int = 1, session: requests.Session | None = None,
         return {"results": [], "_read_pages": 0,
                 "_status": f"没走成：栏目表里没有「{column}」；"
                            f"表缺失或改版时跑 python scripts/tax_shui5.py --update-columns"}
+    # 翻页地址是 `<classid>_<页>.html`，这一栏没有可用编号时第 2 页起根本造不出地址
+    # （2026-11-24 实测：旧写法拼出 `…/AnHuiShengCaiShuiFaGui/None_2.html` 这种站点上
+    # 不存在的地址，读到空页后报成"命中 0 条"，把"这一轮没翻页"说成"这一栏只有这些"）。
+    cid = row.get("classid")
+    if cid is None and "_error" in row:
+        return {"results": [], "_read_pages": 0, "_column": row,
+                "_status": f"没走成：栏目表里「{row['dir']}」那一行是上一轮没取到的失败行"
+                           f"（{row['_error']}），没有可用 classid；"
+                           f"跑 python scripts/tax_shui5.py --update-columns 补这一栏",
+                "_error": f"栏目 {row['dir']} 在表里没有 classid（{row['_error']}）"}
+    no_page = cid is None
     own = session is None
     if own:
         session, how = _pass_waf()
@@ -1113,12 +1139,13 @@ def list_column(column, pages: int = 1, session: requests.Session | None = None,
             return {"results": [], "_read_pages": 0, "_status": f"没走成：{how}"}
     try:
         stem = f"{SHUI5_BASE}article/{row['dir']}/"
+        want_pages = 1 if no_page else max(1, int(pages))
         rows, seen, errs, ctrl, read = [], set(), [], None, 0
-        for n in range(1, max(1, int(pages)) + 1):
+        for n in range(1, want_pages + 1):
             if n > 1:
                 time.sleep(gap)
             page, err = _read_page(session, stem if n == 1
-                                   else f"{stem}{row['classid']}_{n}.html")
+                                   else f"{stem}{cid}_{n}.html")
             if err:
                 errs.append(f"第 {n} 页：{err}")
                 break
@@ -1133,6 +1160,10 @@ def list_column(column, pages: int = 1, session: requests.Session | None = None,
                "_status": (f"命中 {len(rows)} 条（栏目 {row.get('nav') or row['dir']}，"
                            + (f"共 {ctrl[0]} 页 {ctrl[1]} 条）"
                               if ctrl else "控件未读到页数）"))}
+        if no_page and int(pages) > 1:
+            out["_status"] = (f"命中 {len(rows)} 条（栏目 {row.get('nav') or row['dir']}："
+                              f"这一栏在表里没有可用 classid，翻页地址造不出来，"
+                              f"所以只读了第 1 页，不是这一栏只有这些）")
         if errs:
             out["_error"] = "；".join(errs)
         return out
@@ -1150,6 +1181,10 @@ def build_column_table(session: requests.Session | None = None,
     4 个按站点自己的拼法（`NinBoShiFaGui`、`DaiLianShiFaGui`、`ShenZhengShiFaGui`、
     `XiaMenShiFaGui`），另外 `Bulletin` 是英文、`category_181` 是数字号；
     按拼音拼会拼出站点上不存在的地址。
+
+    取不到的栏不整行丢掉，也不留成"只有三枚键"的行：那一行会带着上一轮的 classid
+    留在表里（写明 `_classid_from`）、pages/records 一律空，并在 `_status` 与 `_error`
+    里逐栏点名。理由与两次实测见函数体内注释（2026-11-24）。
     """
     own = session is None
     if own:
@@ -1178,12 +1213,28 @@ def build_column_table(session: requests.Session | None = None,
             if d in dirs and _to_text(text) and d not in label:
                 label[d] = _to_text(text)
         rows = []
+        # 取不到的那一栏不能整行丢掉，也不能留成"只有三枚键"的行：
+        # 2026-11-24 实测旧写法 `{"dir","nav","_error"}` 照样落盘，之后 resolve_column
+        # 按 classid 查任何一栏都抛 KeyError（一枚失败行污染整表），list_column 更是
+        # 先发一个请求再半途崩；而 main 只要 `columns` 非空就覆盖旧的好表。
+        # 编号从上一轮的表继承：实测 47 栏跨 37 天 classid 零漂移（同期 pages 变 6 枚、
+        # records 变 39 枚），所以 classid 是这一行的稳定标识、不是会过期的读数；
+        # 但必须写明它是继承来的，且这一轮的页数条数一律留空——那两枚才是本轮读数。
+        prev = {r.get("dir"): r for r in load_columns()}
+        failed = []
         for i, d in enumerate(sorted(dirs), 1):
             if i > 1:
                 time.sleep(gap)
             page, err = _read_page(session, f"{SHUI5_BASE}article/{d}/")
             if err:
-                rows.append({"dir": d, "nav": nav.get(d, ""), "_error": err})
+                p = prev.get(d) or {}
+                row = {"dir": d, "nav": nav.get(d, ""), "label": label.get(d, ""),
+                       "classid": p.get("classid"), "columns": p.get("columns") or [],
+                       "pages": None, "records": None, "_error": err}
+                if row["classid"] is not None:
+                    row["_classid_from"] = "上一轮的表"
+                rows.append(row)
+                failed.append((d, err))
                 continue
             ids = _COL_PAGE_LINK_RE.findall(page)
             cols = sorted({x["column"] for x in _search_rows(page) if x.get("column")})
@@ -1193,9 +1244,19 @@ def build_column_table(session: requests.Session | None = None,
                          "columns": cols,
                          "pages": ctrl[0] if ctrl else None,
                          "records": ctrl[1] if ctrl else None})
-        return {"built_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "source": SHUI5_BASE, "columns": rows,
-                "_status": f"取到 {len([r for r in rows if r.get('classid')])} / {len(rows)} 栏"}
+        status = f"取到 {len([r for r in rows if r.get('classid')])} / {len(rows)} 栏"
+        if failed:
+            names = "、".join(d for d, _ in failed)
+            status += (f"；{len(failed)} 栏这一轮没取到（{names}），"
+                       "表里那些行的 classid 是上一轮继承的、pages/records 为空，"
+                       "不能当成这一轮的读数")
+        out = {"built_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+               "source": SHUI5_BASE, "columns": rows, "_status": status}
+        if failed:
+            out["_error"] = ("这一轮有 %d 栏列表页没取到：%s"
+                             % (len(failed), "；".join("%s：%s" % (d, e)
+                                                       for d, e in failed[:6])))
+        return out
     finally:
         if own:
             session.close()
@@ -1385,10 +1446,13 @@ def _print_rows(rows: list, read_body: bool = False) -> None:
 
 def _print_table(rows: list) -> None:
     for r in rows:
+        # 旧写法只打 classid/pages/records，失败行打成 `classid=  None  None/None`，
+        # 看着像一栏本来就空，不像"这一轮没取到"（2026-11-24 实测）。
+        tail = f"  ⚠️ {r['_error']}" if r.get("_error") else ""
         print(f"  {r['dir']:34s} classid={str(r.get('classid')):>6} "
               f"{str(r.get('pages')):>5}/{str(r.get('records')):<6} "
               f"{r.get('nav') or r.get('label') or '':6s} "
-              f"{'、'.join(r.get('columns') or [])}")
+              f"{'、'.join(r.get('columns') or [])}{tail}")
 
 
 def main():
