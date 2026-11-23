@@ -55,6 +55,8 @@ HEADERS_WX = {
     "Referer": "https://mp.weixin.qq.com/",
 }
 TIMEOUT = 20
+# 0 命中页的标记（2026-11-24 实测：blocks=0 时该 id 必现、blocks=10 时必不现）
+NO_RESULT_MARK = "noresult_part1_container"
 # 单次检索最多还原多少个跳转链接（搜狗对高频请求敏感）
 MAX_RESTORE = 5
 RESTORE_INTERVAL = 1.2
@@ -128,7 +130,15 @@ def search_wechat(keyword: str, size: int = 5, read_body: bool = False) -> dict:
 
     blocks = _ITEM_RE.findall(r.text)
     if not blocks:
-        return _empty(keyword, "检索结果为空或页面结构已变")
+        # 真 0 命中与"页面结构变了"分开判。实测判据：站点在 0 命中页里放
+        # `<div class="b404-box" id="noresult_part1_container">` 且正文写
+        # "没有找到相关的微信公众号文章。"；有结果的页面（实测 blocks=10 两例）
+        # 都不带这枚标记。原先一句"检索结果为空或页面结构已变"把两者捏在一起，
+        # 于是**合法的零命中也被报成取数失败**（聚合层 tax_aggregator.py:381
+        # 只认 _error 就记进 errors）——那是反向的错：把"没有"说成"失败"。
+        if NO_RESULT_MARK in r.text:
+            return _empty(keyword)
+        return _empty(keyword, "搜狗微信返回的页面既没有结果块也没有无结果提示：可能改版或落在验证页")
 
     results = []
     for block in blocks:
