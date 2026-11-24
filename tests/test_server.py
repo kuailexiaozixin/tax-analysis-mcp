@@ -31,6 +31,7 @@ TOOL_NAMES = {
     "analyze_tax_question",
     "expand_calculation",
     "find_tax_cases",
+    "read_tax_paper",
     "audit_ledger",
     "simulate_inspection",
     "blank_intake_form",
@@ -225,6 +226,38 @@ def test_calculation_expands_and_rejects_extra_params():
 def test_cases_reject_unsupported_order_before_network():
     with pytest.raises(ToolError, match="order 只认"):
         call_tool("find_tax_cases", {"topic": "虚开发票", "order": "date"})
+
+
+def test_paper_rejects_two_branches_at_once_before_network():
+    # 都不给与都给都算越界：这一路的两个分支各打一批站，判据在发请求之前。
+    for args in ({}, {"date": "2026-11-24", "keyword": "虚开"}):
+        with pytest.raises(ToolError, match="二选一"):
+            call_tool("read_tax_paper", args)
+
+
+def test_paper_forwards_every_argument(monkeypatch):
+    captured = {}
+
+    def fake_paper(**kwargs):
+        captured.update(kwargs)
+        return {"results": [{"title": "测试稿"}], "total": None, "_status": ""}
+
+    monkeypatch.setattr(server.tax_service, "paper", fake_paper)
+    data = call_tool("read_tax_paper", {
+        "keyword": "虚开", "editions": [5, 6], "days": 7, "size": 9,
+        "date_from": "2026-11-20", "date_to": "2026-11-24"}).data
+    assert captured["keyword"] == "虚开"
+    assert captured["editions"] == [5, 6]
+    assert captured["date_from"] == "2026-11-20"
+    # total 恒为 None 是这个源的形状（无站内检索，扫不出总数），不能被换掉。
+    assert data["total"] is None
+
+
+def test_paper_edition_out_of_domain_is_rejected(monkeypatch):
+    monkeypatch.setattr(server.tax_service.tax_paper, "fetch_edition",
+                        lambda *a, **k: pytest.fail("不该发请求"))
+    with pytest.raises(ToolError, match="edition"):
+        call_tool("read_tax_paper", {"date": "2026-11-24", "edition": 9})
 
 
 # ── 联网工具的边界与注入 ───────────────────────────────────────────────────
@@ -445,7 +478,7 @@ def test_runtime_snapshot_matches_manifest():
     assert sys.modules[engine.__package__].__version__ == version
     assert server.mcp.version == version
     manifest = json.loads((runtime / "MANIFEST.json").read_text(encoding="utf-8"))
-    assert manifest["engine_version"] == "3.62.22"
+    assert manifest["engine_version"] == "3.62.23"
     listed = manifest["files"]
     actual = {
         path.relative_to(runtime).as_posix()
@@ -681,7 +714,7 @@ def test_vendored_copies_match_fingerprint():
     import hashlib
 
     pins = {
-        "tax_service": "adf63b15c32df4637d6fe730835e1eb4524e28afe8484c95111557d33a531b42",
+        "tax_service": "cc01b7ed8e43ff585ab964f24dce05255e18815b6d8451802acb420edfd97231",
         "tax_doc": "15877a54afaa05f1ac45fb757e2131a1766776e642dd57d24de2636f07f6f608",
     }
     got = {

@@ -146,6 +146,7 @@ PYTHONPATH=src python -m tax_engine_mcp.server
 |---|---|---|
 | `expand_calculation` | 代入步骤、分档与结果；缺参数报 `missing_params`，多余参数报 `invalid_parameter` | 否 |
 | `find_tax_cases` | 税务总局查处通报与曝光典型的候选、过滤和去重台账 | 是 |
+| `read_tax_paper` | 中国税务报网络报（数字报）的版面内容或逐日扫版面的关键词命中；`date` 与 `keyword` 二选一，这一源不参与多源聚合 | 是 |
 | `audit_ledger` | 八要素风险条目、判不动清单、参数缺口与数据缺口 | 否 |
 | `simulate_inspection` | 逐问的六字段问询单元与三类缺口；没有作答也能生成 | 否 |
 | `blank_intake_form` | 一份空白多合同受理表，含一条合同占位记录 | 否 |

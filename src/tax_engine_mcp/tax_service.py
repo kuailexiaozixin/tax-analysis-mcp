@@ -33,6 +33,7 @@ import tax_http
 import tax_intake
 import tax_inspect
 import tax_ledger
+import tax_paper
 import tax_related
 import tax_search
 import tax_web_search
@@ -551,6 +552,51 @@ def cases(topic: str, elements: list[str] | None = None,
     except Exception as e:
         raise ServiceError("upstream_error",
                            f"类案检索失败：{tax_http.short_reason(e)}",
+                           502) from e
+
+
+def paper(date: str = "", keyword: str = "", edition: int = 6,
+          editions: list[int] | None = None, days: int = 10, size: int = 6,
+          date_from: str = "", date_to: str = "") -> dict:
+    """中国税务报·网络报（数字报）：date 取一天一版，keyword 扫近 N 天。
+
+    这一源不进多源聚合，也不进 search 的 sources 取值域：同一篇稿在本报与
+    中国税网常用两副标题（全题／半题），而聚合层按标题字符三元 Jaccard 去重，
+    进了就会把两条不同地址的稿子错并成一条（实测 2026-11-24：29 枚里同稿仅
+    6 枚）。所以它是独立取数口，date 与 keyword 二选一。
+    """
+    date = _date(date, "date")
+    keyword = _opt_text(keyword, "keyword")
+    date_from = _date(date_from, "date_from")
+    date_to = _date(date_to, "date_to")
+    if bool(keyword) == bool(date):
+        raise ServiceError(
+            "invalid_parameter",
+            "date 与 keyword 二选一：看一天一版给 date，按关键词扫近 N 天给 keyword",
+            details={"field": "date/keyword"})
+    edition = _int_in(edition, "edition", 1, 8)
+    days = _int_in(days, "days", 1, 30)
+    size = _int_in(size, "size", 1, 30)
+    eds: list[int] = []
+    if editions is not None:
+        if not isinstance(editions, list):
+            raise ServiceError("invalid_parameter", "editions 必须是数组",
+                               details={"field": "editions", "value": editions})
+        for i, x in enumerate(editions):
+            n = _int_in(x, "editions[%d]" % i, 1, 8)
+            if n not in eds:
+                eds.append(n)
+    try:
+        if date:
+            return tax_paper.fetch_edition(date, edition=edition)
+        return tax_paper.search_paper(keyword, days=days, size=size,
+                                      editions=tuple(eds or [edition]),
+                                      date_from=date_from, date_to=date_to)
+    except ValueError as e:
+        raise ServiceError("invalid_parameter", str(e)) from e
+    except Exception as e:
+        raise ServiceError("upstream_error",
+                           f"数字报送数失败：{tax_http.short_reason(e)}",
                            502) from e
 
 

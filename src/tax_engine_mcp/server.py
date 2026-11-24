@@ -352,6 +352,41 @@ def find_tax_cases(
     )
 
 
+@mcp.tool(tags={"network", "paper"}, annotations=_READ_WEB)
+def read_tax_paper(
+    date: str = "",
+    keyword: str = "",
+    edition: int = 6,
+    editions: list[int] | None = None,
+    days: int = 10,
+    size: int = 6,
+    date_from: str = "",
+    date_to: str = "",
+) -> dict:
+    """中国税务报·网络报（数字报）：date 取一天一版，keyword 扫近 N 天版面。
+
+    date 与 keyword 二选一：看某天某一版给 date（YYYY-MM-DD），按关键词找稿给
+    keyword。站点没有站内检索，keyword 那一路是逐日扫版面再本地比文，days 越大
+    越慢；editions 不给就只扫第 6 版，而版面栏目逐日漂移（11-17 第 6 版是税案
+    传真、11-18 是税务研究），找税案稿要传多版。
+
+    这一源不进多源聚合：同一篇稿在本报与中国税网常用两副标题（全题／半题），
+    聚合层按标题去重会把两条不同地址的稿子错并成一条。没命中只说明扫过的日子
+    与版面里没有，不等于报上没有。
+    """
+    return _call(
+        tax_service.paper,
+        date=date,
+        keyword=keyword,
+        edition=edition,
+        editions=editions,
+        days=days,
+        size=size,
+        date_from=date_from,
+        date_to=date_to,
+    )
+
+
 # ── 工具：检查类 ───────────────────────────────────────────────────────────
 
 @mcp.tool(tags={"offline", "audit"}, annotations=_READ_OFFLINE)
