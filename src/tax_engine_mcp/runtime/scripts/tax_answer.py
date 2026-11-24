@@ -1224,7 +1224,7 @@ def _print_accounting_gap(gap: list):
     print("\n会计口径缺口（六个税收源都不收准则条文，取证的入口是子技能）：")
     for g in gap:
         print(f"  · 要先问清会计上的哪一件事：{g}")
-    print("  · 读 subskills/chenyiwei-bbs/SKILL.md，准则原文与实务答疑都在那里")
+    print("  · 读 search_source/chenyiwei-bbs/SKILL.md，准则原文与实务答疑都在那里")
     print("  · 准则与答疑不是税收法定依据：前提写进【适用边界】，"
           "口径进【执行口径与实务认定】那一栏")
 

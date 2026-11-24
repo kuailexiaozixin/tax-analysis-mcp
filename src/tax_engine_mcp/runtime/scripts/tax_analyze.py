@@ -215,7 +215,7 @@ RULE_AXES = ("time",)
 # 税法条文常常不自己定义会计概念：条款里写"确认收入""计入当期损益""公允价值"，
 # 说的是会计上怎么处理，税法只借用那个结果。六个税收源都不收企业会计准则，
 # ③ 的 L1→L4 走到头也取不到这一层——这就是会计口径缺口。命中下面任何一组词，
-# 就登记一条缺口，取证交给子技能（`subskills/chenyiwei-bbs/SKILL.md`，见 ③）。
+# 就登记一条缺口，取证交给子技能（`search_source/chenyiwei-bbs/SKILL.md`，见 ③）。
 #
 # 每组右边写的是"要先问清会计的哪一件事"，不写税上的结论：这一栏会把判断
 # 递给准则检索，本身不能替准则作答。词表只收多字短语，单收"收入""资产"
@@ -330,7 +330,7 @@ def accounting_note(gap: list) -> str:
         return ""
     return ("这道题的税法要件落在会计确认与计量上（" + "；".join(gap) +
             "）。六个税收源都不收企业会计准则条文，取证入口是子技能 "
-            "subskills/chenyiwei-bbs/SKILL.md；准则与实务答疑只作适用前提与参考，"
+            "search_source/chenyiwei-bbs/SKILL.md；准则与实务答疑只作适用前提与参考，"
             "不是税收法定依据。")
 
 
@@ -608,7 +608,7 @@ def main():
         print("\n会计口径缺口（准则条文不在六个税收源的覆盖范围内）：")
         for g in gap:
             print(f"  · 要先问清会计上的哪一件事：{g}")
-        print("  · 取证入口：subskills/chenyiwei-bbs/SKILL.md")
+        print("  · 取证入口：search_source/chenyiwei-bbs/SKILL.md")
     note = legislative_note(r["legislative_stage"])
     if note:
         print(f"\n立法阶段限制：{note}")

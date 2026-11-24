@@ -115,7 +115,7 @@ def keyword_note(keyword: str, results: list, total: int) -> str:
     """多枚词拼成一串时，用已经取回的那一页说清本轮由哪枚词主导。不多发请求。
 
     search5 对空格分隔的多词按**任一词命中**，不是 AND。2026-11-10 本机实测
-    （size=10，FILE_LABELS 默认档，逐发读数见 subskills/chinatax/NOTE.md）：
+    （size=10，FILE_LABELS 默认档，逐发读数见 search_source/chinatax/NOTE.md）：
     「碳排放权 增值税」1911 条、「碳排放权」1 条，前者首屏十条全是小规模纳税人
     减免增值税公告，标题含「碳排放」0 条；加 wordPlace=1 收到 909 条、首屏仍是
     同一批；加 participleRule=5 收到 73 条，单独发「碳排放权」命中的那一份
@@ -157,7 +157,7 @@ def build_filters(in_title: bool = False, precise: bool = False,
 
     只发填了的维度，返回的 dict 直接喂给 search_chinatax(filters=…)。各项取值
     来自本机单发实测：开关清单在 references/commands.md，逐档取值域与单发
-    读数在 subskills/chinatax/NOTE.md。不要凭记忆改。哪些维度真的会被发出去
+    读数在 search_source/chinatax/NOTE.md。不要凭记忆改。哪些维度真的会被发出去
     分两种：范围／匹配／日期／时效
     （aging）由网页界面那四个控件驱动（tax_server._ui_filters），效力等级与文种、
     税种那几组目前只有命令行用得到（--effect-level / --doc-type / --tax-type）。
@@ -235,7 +235,7 @@ def build_filters(in_title: bool = False, precise: bool = False,
             raise ValueError(f"{key} 不是真实日期，收到 {val!r}")
         # 接口这一维要完整时间戳：只给日期时日期值不参与比较，这一发换成"这一维有没有值"
         # 的过滤——全站基数下「2024 全年」「只发起点」「只发终点」「2025 上半年」四种裸写法
-        # 同回 2432，带整点时间戳才按区间收到 207。逐发读数见 subskills/chinatax/NOTE.md 第三节。
+        # 同回 2432，带整点时间戳才按区间收到 207。逐发读数见 search_source/chinatax/NOTE.md 第三节。
         out[key] = d + (" 00:00:00" if key == "cwrqStart" else " 23:59:59")
     return out
 
@@ -263,7 +263,7 @@ def search_chinatax(keyword: str, page: int = 1, size: int = 10,
             发 label=新闻 回 0，换成站点真实的那枚「新闻发布」回 2 条。所以案例
             检索走 column 的依据是栏目覆盖得全（同一枚「新闻发布」在 columnList
             是 12,924 条），不是"label 只认文件类那十枚"
-            （逐发读数见 references/source_defects.md 与 subskills/chinatax/NOTE.md）。
+            （逐发读数见 references/source_defects.md 与 search_source/chinatax/NOTE.md）。
 
     页码基准：search5 的 pageNum 从 0 起算。实测同一检索词「企业重组」
     发 pageNum=0 与 pageNum=1 各回 10 条、url 交集为空，且 pageNum=0 那组

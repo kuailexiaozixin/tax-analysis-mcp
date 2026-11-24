@@ -1074,7 +1074,7 @@ def main():
     if result["total"] > args.size:
         print(f"  📄 第 {args.page} 页，本屏 {len(result['results'])} 条；"
               f"可达页数不按接口 total 推算（它随 pageSize 与 pageNum 换值，"
-              f"判据见 subskills/npc-flk/NOTE.md 第二节）")
+              f"判据见 search_source/npc-flk/NOTE.md 第二节）")
 
 
 if __name__ == "__main__":

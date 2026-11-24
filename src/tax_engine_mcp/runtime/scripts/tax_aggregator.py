@@ -19,7 +19,7 @@ WAF：默认这一路只取链接（不要凭据），要正文时由 tax_shui5 
 
 中国税网是报社站，登的多是别人发的文件：这一路的条目进的是检索层，
 被它登的那份文件才是依据，依据链里的 url 要写官方那一份（判据见
-subskills/ctaxnews/ 与 SKILL ③ L4）。它服务端收发布日期区间，
+search_source/ctaxnews/ 与 SKILL ③ L4）。它服务端收发布日期区间，
 所以和 NPC／税务总局一样走 DATE_SERVER_SOURCES，不靠本地补筛。
 
 AnySearch 已移除：本机不存在其 CLI（~/.claude/skills/anysearch/scripts 下

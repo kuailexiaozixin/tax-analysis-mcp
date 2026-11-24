@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """中国税务报网络报（数字报）第七源。
 
-这不是第六源（中国税网 www.ctaxnews.com.cn，`tax_ctax.py` 与 subskills/ctaxnews/）
+这不是第六源（中国税网 www.ctaxnews.com.cn，`tax_ctax.py` 与 search_source/ctaxnews/）
 的翻版，三读数定死差别（2026-11-24 八轮只读勘察，探针与报告在
 D:\\DeepSeek Harness WorkSpace\\.tmp-inspect\\netpaper-probe23{,b..o}.txt）：
  * **主机不同**：本文件打 `www.ctaxnews.net.cn`（中国税务报网络报·数字报），
