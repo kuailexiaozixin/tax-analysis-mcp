@@ -3,8 +3,14 @@
 
 引擎里这两件事写在 tax_server 的 Flask 路由层内，适配器要用就得连带把
 Flask 拉进来。本副本只 import 随包携带的运行时取数脚本（tax_detail／
-tax_sogou／tax_shui5／tax_wechat），不 import tax_server，所以 CLI、API、
-MCP 都拿得到全文与官方解读，又都不依赖 Flask。
+tax_sogou），不 import tax_server，所以 CLI、API、MCP 都拿得到全文与
+官方解读，又都不依赖 Flask。
+
+3.62.21 起本文件不再有第二份"实务解读源"清单：那份 TAX_PRACTICE_SOURCES
+与它配套的检索函数是 tax_server 路由层的老抄本，全仓无人引用，而活的那份
+（带每一源失败说明的通道）在 runtime/scripts/tax_related.py，由各仓
+tax_service 的 web_related 走它。留着一份没人调用的旧抄本，等于给下一个
+改这处的人准备一次无声的无效修复——它改了、生效的不是它。
 
 本文件是逐项目副本：CLI、API、MCP 各自带一份，三份内容要求逐字节相同，
 由各自的测试用 SHA-256 校验。全文段落缓存是本进程内的字典；解读复用取数层缓存。
@@ -17,8 +23,6 @@ import time
 import tax_http
 from tax_detail import download_bytes, _parse_docx_from_bytes
 from tax_sogou import sogou_search
-from tax_shui5 import search_shui5
-from tax_wechat import search_wechat
 
 
 _text_cache = {}
@@ -49,31 +53,6 @@ def _is_garbage_result(url: str = "", title: str = "") -> bool:
         if kw in lower_title:
             return True
     return False
-
-
-TAX_PRACTICE_SOURCES = [
-    {"name": "小颖言税", "query_hint": "小颖言税"},
-    {"name": "税海涛声", "query_hint": "税海涛声"},
-    {"name": "会计网",   "query_hint": "会计网"},
-    {"name": "税小课",   "query_hint": "税小课服务"},
-    {"name": "朴税",     "query_hint": "朴税"},
-    # 这两个是 /api/web-related 实际会直连的源，不列进来的话，
-    # 税屋和公众号的条目会被打成"实务解读"以外的泛标签。
-    {"name": "税屋",     "query_hint": "shui5.cn"},
-    {"name": "微信公众号", "query_hint": "mp.weixin.qq.com"},
-]
-# 官方站点：这些是政策原文来源，不能标成"实务解读"
-OFFICIAL_DOMAINS = [
-    "chinatax.gov.cn", "mof.gov.cn", "gov.cn", "npc.gov.cn",
-    "chinatax.cn", "chinatax.gov",
-]
-# Sources that should be tagged as "实务解读" even if not from .gov.cn
-# 不要用 "tax" 这种裸子串：chinatax.gov.cn 含 tax，会把官方站点误判成实务解读。
-PRACTICE_DOMAIN_KEYWORDS = [
-    "小颖言税", "税海涛声", "会计网", "税小课", "朴税",
-    "mp.weixin.qq.com", "zhuanlan.zhihu.com", "toutiao.com",
-    "shui5.cn", "shuiwu", "kuaiji", "chinaacc", "shuilishi", "shuikuai",
-]
 
 
 # ── Interpretation Search Engine ─────────────────────────────────────────
@@ -138,55 +117,6 @@ def _source_label(site: str) -> str:
         }
         return province_map.get(m.group(1), f"{m.group(1)}税务")
     return site
-
-
-def _is_practice_source(label_or_domain: str) -> bool:
-    """Check if a source label matches known tax practice outlets."""
-    s = (label_or_domain or "").lower()
-    # 官方站点优先排除：chinatax.gov.cn 里含 "tax"，不先排除会被误判
-    for dom in OFFICIAL_DOMAINS:
-        if dom in s:
-            return False
-    for kw in PRACTICE_DOMAIN_KEYWORDS:
-        if kw.lower() in s:
-            return True
-    return False
-
-
-def _practice_source_name(domain: str, title: str) -> str:
-    """Return the practice source name if the domain/title matches, else ''."""
-    combined = f"{domain} {title}".lower()
-    for src in TAX_PRACTICE_SOURCES:
-        if src["query_hint"] in combined:
-            return src["name"]
-    return ""
-
-
-def _search_practice_sources(query: str, n: int = 3) -> list[dict]:
-    """Practical-interpretation sources: www.shui5.cn + WeChat public accounts.
-
-    Both were previously routed through Bing site: search, which no longer
-    returns usable results. They are now queried through their own modules.
-    """
-    results = []
-    seen = set()
-
-    for name, data in [("税屋", search_shui5(query, size=n)),
-                       ("微信公众号", search_wechat(query, size=n))]:
-        for item in (data or {}).get("results", []):
-            href = item.get("url", "")
-            if not href or href in seen or _is_garbage_result(href, item.get("title", "")):
-                continue
-            seen.add(href)
-            results.append({
-                "title": item.get("title", ""),
-                "url": href,
-                "date": item.get("date", ""),
-                "source": name,
-                "source_label": name,
-                "snippet": (item.get("snippet") or item.get("content", ""))[:180],
-            })
-    return results
 
 
 def search_interpretations(law_title: str, keyword: str = "",
