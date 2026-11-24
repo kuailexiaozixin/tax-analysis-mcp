@@ -165,7 +165,8 @@ def _date_scope_note(date_from: str, date_to: str, sources: list,
 
 
 def _build_gaps(sources: list, errors: dict, source_summary: dict,
-                 shui5_channels: dict | None = None) -> list:
+                 shui5_channels: dict | None = None,
+                 partial: dict | None = None) -> list:
     """把源级失败翻译成"缺了哪一层 + 怎么处理"，供上层照抄，不用自己推断。
 
     三条判定：
@@ -177,6 +178,13 @@ def _build_gaps(sources: list, errors: dict, source_summary: dict,
          各自这一轮没命中，归到税屋自己身上。没有 `_channels` 回报时不做推断：
          那一轮到底走没走搜狗没有证据，按别的源（如聚合器自己的 sogou）的
          失败去猜，会把两次独立请求混成一件事。
+
+    partial 是第四种形状，与前三条不同源：那一轮**清单取到了**、只是逐枚正文
+    或链接没取全。它不能进 errors——errors 的话术是"该源本次没有取到内容"，
+    而这里取到了；也不能不进缺口，否则条目带着空正文混在 items 里，读起来像
+    整层都看过了（2026-11-24 探针 .tmp-inspect/partial_loss_surfaces.py 实测
+    三面全静默）。标签带后缀，是为了 `_degraded_note` 那句"缺失：X"读起来
+    说的是"这一层没看全"，不是"这一层是空的"。
     """
     gaps = []
     for src in sources:
@@ -186,6 +194,18 @@ def _build_gaps(sources: list, errors: dict, source_summary: dict,
                 "label": SOURCE_LABELS.get(src, src),
                 "reason": errors[src],
                 "impact": SOURCE_IMPACT.get(src, "该源本次没有取到内容"),
+                "do_not_substitute": True,
+            })
+        if src in (partial or {}):
+            # 两枚可以并存（站内断供 + 半截正文），所以这里不能接在 elif 后面：
+            # 整体失败那一条说过以后，逐枚没取全这件事就没地方说了。
+            gaps.append({
+                "source": src,
+                "label": f"{SOURCE_LABELS.get(src, src)}（清单取到、逐枚没取全）",
+                "reason": partial[src],
+                "impact": "这一层给回的条目里有些没有正文或没有可用地址，"
+                          "不能当成这一层已经看全；缺的那几篇要单独补取或改走别处",
+                "partial": True,
                 "do_not_substitute": True,
             })
 
@@ -373,6 +393,7 @@ def aggregate_search(keyword: str, *,
     # Collect all results，按权威性排序
     all_items = []
     local_stats = {}
+    partial_notes = {}
     for source, data in results.items():
         if not data:
             continue
@@ -380,6 +401,11 @@ def aggregate_search(keyword: str, *,
         # source_summary 里的 0 条只说明没拿到，不说明该源没有内容。
         if data.get("_error"):
             errors[source] = data["_error"]
+        if data.get("_partial_error"):
+            # 清单取到了、逐枚正文/地址没取全：这一档不是"该源没取到内容"，
+            # 所以要单独记，别让条目带着空正文混进 items 后没人知道。
+            # 两枚可以同时成立（站内断供 + 半截正文），各自说各自的。
+            partial_notes[source] = data["_partial_error"]
         rank = SOURCE_RANK[source]
         source_rel = data.get("_reliability")
         source_note = data.get("_reliability_note", "")
@@ -431,7 +457,8 @@ def aggregate_search(keyword: str, *,
         for s in sources
     }
     gaps = _build_gaps(sources, errors, source_summary,
-                       (results.get("shui5") or {}).get("_channels"))
+                       (results.get("shui5") or {}).get("_channels"),
+                       partial=partial_notes)
     out = {
         "keyword": keyword,
         "total_sources": len(sources),

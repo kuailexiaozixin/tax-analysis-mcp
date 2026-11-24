@@ -110,6 +110,12 @@ def search_practice_sources(query: str, n: int = 3) -> tuple[list, str]:
         data = data or {}
         if data.get("_error"):
             notes.append(f"{name}：{data['_error']}")
+        elif data.get("_partial_error"):
+            # 逐枚失败只在顶层才有机会说话：下面那道 `if not href` 会把微信没还原出
+            # 地址的条目整条丢掉（不计数），税屋的空正文条目则带着空 snippet 原样交出。
+            # 两种形状在返回值里都看不出来，2026-11-24 探针 .tmp-inspect/partial_loss_surfaces.py
+            # 实测：三枚里两枚失败时交回 1 条而说明为空，读成「网上只有 1 篇解读」。
+            notes.append(f"{name}：{data['_partial_error']}")
         for item in data.get("results", []):
             href = item.get("url", "")
             if not href or href in seen or is_garbage_result(href, item.get("title", "")):

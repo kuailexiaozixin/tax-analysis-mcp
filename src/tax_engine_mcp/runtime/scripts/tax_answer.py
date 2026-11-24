@@ -234,22 +234,22 @@ def _reroute_first_round(rounds: list, question: str) -> None:
 
 
 # ── 执行 ───────────────────────────────────────────────────────────────────
-def _npc_round(term: str, size: int) -> tuple[list, str]:
+def _npc_round(term: str, size: int) -> tuple[list, str, str]:
     # 本体法名已知时走精确检索。模糊检索按相关度排，宪法类文本会因为
     # "法"字出现在"企业所得税法"里而被顶到首位（实测"中华人民共和国企业
     # 所得税法"模糊检索首条是宪法），主依据会被选错。
     st = 1 if term.startswith("中华人民共和国") else 2
-    rows, err = _rows_and_error(
+    rows, err, partial = _rows_and_error(
         T.search_tax(term, scope="title", search_type=st, status=3, size=size))
-    return rows, err
+    return rows, err, partial
 
 
-def _fgk_round(term: str, size: int) -> tuple[list, str]:
-    rows, err = _rows_and_error(FGK.search_fgk(term, size=size))
-    return rows, err
+def _fgk_round(term: str, size: int) -> tuple[list, str, str]:
+    rows, err, partial = _rows_and_error(FGK.search_fgk(term, size=size))
+    return rows, err, partial
 
 
-def _whole_site_round(term: str, size: int) -> tuple[list, str]:
+def _whole_site_round(term: str, size: int) -> tuple[list, str, str]:
     """税务总局站的全站层：关掉文件类标签，取动态、新闻与解读编译。
 
     只有 authority="overseas" 的专题走这里（判据见 `_overseas_rounds`）。取回的
@@ -257,45 +257,53 @@ def _whole_site_round(term: str, size: int) -> tuple[list, str]:
     哪个年度生效，拿去答"在中国要怎么缴"就是错位。这一句和"来源提示可能偏题"那句
     兜底提醒说的不是同一件事，所以写成条目自己的 `_reliability_note`。
     """
-    rows, err = _rows_and_error(W.search_chinatax(term, size=size,
-                                                  file_only=False))
+    rows, err, partial = _rows_and_error(W.search_chinatax(term, size=size,
+                                                           file_only=False))
     for row in rows:
         row["_reliability"] = "medium"
         row["_reliability_note"] = (
             "税务总局网站全站层（文件类标签之外）的动态或解读页：它说明的是境外辖区"
             "的立法进展，不是中国境内的征税依据——要落到具体辖区名与生效年度才能用")
-    return rows, err
+    return rows, err, partial
 
 
-def _shui5_round(term: str, size: int) -> tuple[list, str]:
-    rows, err = _rows_and_error(S5.search_shui5(term, size=size, read_body=True))
-    return rows, err
+def _shui5_round(term: str, size: int) -> tuple[list, str, str]:
+    rows, err, partial = _rows_and_error(S5.search_shui5(term, size=size, read_body=True))
+    return rows, err, partial
 
 
-def _wechat_round(term: str, size: int) -> tuple[list, str]:
-    rows, err = _rows_and_error(WX.search_wechat(term, size=size))
-    return rows, err
+def _wechat_round(term: str, size: int) -> tuple[list, str, str]:
+    rows, err, partial = _rows_and_error(WX.search_wechat(term, size=size))
+    return rows, err, partial
 
 
-def _rows_and_error(r: dict) -> tuple[list, str]:
-    """把源返回拆成 (条目, 失败说明)，两种"没有"必须分开带出去。
+def _rows_and_error(r: dict) -> tuple[list, str, str]:
+    """把源返回拆成 (条目, 整体失败说明, 逐枚没取全的说明)，三种"没有"分开带出去。
 
     轮次函数若写成 `rows if not r.get("_error") else []`，源挂了和被
     判空就都变成长度 0 的列表，错误文本就地丢掉。后果是主依据会静默降级——实测
     点名《税收征管法》那一趟，NPC 没回来时法律那一档的现行有效依据不见了，
     顶上【主依据】的是部门规章《个体工商户建账管理暂行办法》，输出里一个字都
-    看不
-    出这是取数失败而不是库里没有。
+    看不出这是取数失败而不是库里没有。
+
+    第三枚说的是第三种形状，与第二枚不能混：`_partial_error` 的意思是**清单取回
+    了、逐枚正文或地址没取全**。把它并进第二枚，上面那一支会连带把已经取回的那几
+    条一起作废（说成整轮没取到）；完全不并，2026-11-24 探针
+    `.tmp-inspect/partial_loss_surfaces.py` 实测三个消费面全静默——空正文条目照常
+    进 evidence，读者看是「这几篇都核过了」。所以行照常交出、说明另带一枚。
     """
     err = r.get("_error") or ""
-    return (r.get("results", []) if not err else []), err
+    if err:
+        return [], err, ""
+    rows = r.get("results", [])
+    return rows, "", (r.get("_partial_error") or "" if rows else "")
 
 
 # 法律草案、审议结果报告、征求意见公告的法定公布平台。六个税收源都不收这一层。
 LEGISLATION_SITE = "npc.gov.cn"
 
 
-def _legis_round(term: str, size: int) -> tuple[list, str]:
+def _legis_round(term: str, size: int) -> tuple[list, str, str]:
     """立法过程实位：在中国人大网站内找草案与审议公告。
 
     问的是草案时，只取回现行有效文本等于答错题——那一份是修订基线，不是草案
@@ -303,9 +311,12 @@ def _legis_round(term: str, size: int) -> tuple[list, str]:
     `_reliability: medium`（这一条只是定位文本的线索，可能偏题）与
     `legislative_process`（它不是已公布的条文）：前者进 `caveats` 变成一句
     提醒，后者让 `tax_evidence.pick_primary` 不把它挑成主依据。
+
+    第三枚与 `_rows_and_error` 同形（这一路也走搜狗，逐枚正文没取到时是同一
+    种形状），六个取数函数必须同元数——`_FETCHERS` 的调用点按三元解包。
     """
-    rows, err = _rows_and_error(SG.sogou_search(term, site=LEGISLATION_SITE,
-                                                size=size))
+    rows, err, partial = _rows_and_error(SG.sogou_search(term, site=LEGISLATION_SITE,
+                                                         size=size))
     for row in rows:
         row["_reliability"] = "medium"
         row["_reliability_note"] = ("立法过程件（中国人大网站内检索所得），"
@@ -314,7 +325,7 @@ def _legis_round(term: str, size: int) -> tuple[list, str]:
         # 这一层的件子可能恰恰就是题面问的那份草案，它不能当主依据的原因是
         # 文本还没有效力，不是排序不可信。compose 据此把它排除在主依据候选之外。
         row["legislative_process"] = True
-    return rows, err
+    return rows, err, partial
 
 
 # 这一张表按回合（round）逐源取正文，和 ④ 的并发名单是两件事，键集合本来就不必
@@ -814,7 +825,9 @@ def gather(question: str, at: str = "", read_body: bool = True,
 
     Returns:
         plan 字段 + {"evidence":[定级后的依据], "rounds_done":[...],
-        "errors":[...], "citation_check":{核对进度}}。
+        "errors":[...], "partial_notes":[...], "citation_check":{核对进度}}。
+        `errors` 只装"这一路没取到"，`partial_notes` 只装"清单取到了但逐枚
+        没取全"——两件事合在一句里就把半成功说成失败（或反之）。
     """
     plan = build_plan(question)
     tname = plan["type"]["type"]
@@ -822,6 +835,11 @@ def gather(question: str, at: str = "", read_body: bool = True,
     terms = search_terms(question)
 
     seen, evidence, errors, rounds_done = set(), [], [], []
+    # partial_notes 与 errors 是两条通道，一条都不能省：errors 说的是"这一路没
+    # 取到"，partial_notes 说的是"清单取到了、逐枚正文或地址没取全"。合成一条
+    # 就把半成功报成失败（读者会以为这几条不存在），分不开则探针实测到的那种
+    # 静默——半截正文顶着"已核过"的样子进答案。
+    partial_notes = []
     cited = terms.get("cited") or []
     cited_located = False
     cited_state = ""
@@ -864,12 +882,12 @@ def gather(question: str, at: str = "", read_body: bool = True,
             try:
                 if src == "shui5" and not read_body:
                     r = S5.search_shui5(kw, size=1, read_body=False)
-                    rows, err = _rows_and_error(r)
+                    rows, err, partial = _rows_and_error(r)
                 else:
                     size = sizes.get(src, 8)
                     if max_per_round is not None:
                         size = min(size, max_per_round)
-                    rows, err = fn(kw, size)
+                    rows, err, partial = fn(kw, size)
             except Exception as e:                      # 单源失败不中断整轮
                 errors.append(f"第{rnd['round']}轮 {src} 失败："
                               f"{str(e).splitlines()[0][:110]}")
@@ -883,6 +901,15 @@ def gather(question: str, at: str = "", read_body: bool = True,
                 errors.append(f"第{rnd['round']}轮 {src} 取数失败：{err}"
                               f"（本轮目标：{rnd['goal']}）")
                 failed_this_round.append(src)
+            elif partial:
+                # 第三种形状单列一支，绝不并进上面那条 elif：`errors` 的消费方
+                # （compose 的 fetch_note、CLI 的【取数失败】）说的是"取数失败"，
+                # 而这一档**条目取回来了、只是逐枚正文或地址没取全**。混进那一支
+                # 就是把"看全了"说成"没取到"（方向与红线⑦相反，同样是假话）；
+                # 什么都不写则是探针实测到的静默。两边都不对，所以另开
+                # partial_notes 一条通道，compose 单独说一句。
+                partial_notes.append(f"第{rnd['round']}轮 {src}：{partial}"
+                                     f"（本轮目标：{rnd['goal']}）")
 
             for row in rows:
                 url = row.get("url") or row.get("id") or row.get("title", "")
@@ -914,6 +941,7 @@ def gather(question: str, at: str = "", read_body: bool = True,
     plan["topic_terms"] = topic_terms
     plan["rounds_done"] = rounds_done
     plan["errors"] = errors
+    plan["partial_notes"] = partial_notes
     plan["corroborated"] = corroborated
     plan["citation_check"] = citation_check
     plan["at"] = at
@@ -1095,6 +1123,16 @@ def compose(plan: dict) -> dict:
             "本轮有源取数失败，上面的分层是在缺源的底稿上做的："
             "没列出的文件不等于库里没有，先补取这一轮再下结论"
             if plan.get("errors") else ""),
+        # 第三种形状单独一句，不并进 fetch_note：那一说的是"没取到"，这一说的是
+        # "取到了、正文或地址没取全"。条目确实进了分层，所以要说的是这些条目的
+        # 正文没读全，而不是这一层是空的（2026-11-24 探针实测到的就是这两件事
+        # 在输出面上分不开）。
+        "partial_notes": plan.get("partial_notes", []),
+        "partial_note": (
+            "本轮有源的清单取回来了、逐枚却没取全（正文空着或没有可用地址）："
+            "上面这些条目按标题分层是真的，按正文核过不是——缺的那几篇要单独补读，"
+            "别把这一层当成已经看全"
+            if plan.get("partial_notes") else ""),
         "evidence_gap": (
             "" if citable else
             "本轮没有取到规定这道题的法定文件——各栏里只有执行口径、立法过程线索"
@@ -1243,6 +1281,13 @@ def _print_answer(a: dict):
         if len(a["fetch_errors"]) > 5:
             print(f"  …另有 {len(a['fetch_errors']) - 5} 条")
         print(f"  {a['fetch_note']}")
+    if a.get("partial_notes"):
+        print(f"\n【清单取到、逐枚没取全】")
+        for e in a["partial_notes"][:5]:
+            print(f"  ◐ {e[:130]}")
+        if len(a["partial_notes"]) > 5:
+            print(f"  …另有 {len(a['partial_notes']) - 5} 条")
+        print(f"  {a['partial_note']}")
     print(f"\n统计：{a['counts']}")
 
 

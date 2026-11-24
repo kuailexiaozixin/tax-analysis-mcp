@@ -709,7 +709,7 @@ def search_shui5(keyword: str, size: int = 5, read_body: bool = False,
 
     Returns:
         {"keyword","total","results","searched_at","source","_channel",
-         "_channels","_filter_note"?,"_error"?}
+         "_channels","_filter_note"?,"_error"?,"_partial_error"?}
         results 每项含 title/url/date/snippet（站内那一路另有 column）；
         标题尾部带站点时效标记的那一行另有 status_mark，取值见 _STATUS_MARK_RE。
         read_body=True 时额外含 content 与 pages；正文开头带「税屋提示——」批注的
@@ -778,11 +778,13 @@ def search_shui5(keyword: str, size: int = 5, read_body: bool = False,
             err = "两条检索通道都没取到：" + "；".join(f"{k} {v}" for k, v in failed.items())
 
     how = ""
+    partial = ""
     if read_body and results:
         # 一次过 WAF、连读全部，不逐篇重启浏览器
         arts = read_articles([r["url"] for r in results], session=session)
         _attach_bodies(results, arts)
         how = arts[-1].get("_how", "") if arts else ""
+        partial = _partial_note(results)
 
     out = {
         "keyword": keyword,
@@ -796,11 +798,42 @@ def search_shui5(keyword: str, size: int = 5, read_body: bool = False,
     }
     if err:
         out["_error"] = err
+    if partial:
+        out["_partial_error"] = partial
     if note:
         out["_filter_note"] = note
     if how:
         out["_how"] = how
     return out
+
+
+def _partial_note(rows: list) -> str:
+    """把逐枚正文失败汇成一句顶层说明；一篇都没失败时回空串。
+
+    为什么要有这一句：`_attach_bodies` 把失败记在**条目身上**（`row["_error"]` /
+    `row["_pages_error"]`），而三个消费面读的都是**顶层**——`tax_related.py:111`、
+    `tax_aggregator.py:381`、`tax_answer._rows_and_error` 都只看 `data.get("_error")`。
+    2026-11-24 探针 `.tmp-inspect/partial_loss_surfaces.py` 实测：三篇里两篇正文没取到时，
+    实务那一路交回 3 条（两条空正文）而说明为空，答案层把空正文条目照常送进 evidence，
+    调用方读成「这三篇都看过了」。那是红线⑦。
+
+    不用顶层 `_error` 说这件事：顶层那枚的语义是「这一路整体没取到」，调用方见到它会
+    把已取回的条目一起作废（`_rows_and_error` 就是这一支）——清单确实取回了，只是逐枚
+    正文没读全，两件事得分开说。
+    """
+    if not rows:
+        return ""
+    lost = sum(1 for r in rows if r.get("_error"))
+    cut = sum(1 for r in rows if not r.get("_error") and r.get("_pages_error"))
+    parts = []
+    if lost:
+        parts.append(f"{lost}/{len(rows)} 篇正文一篇都没取到")
+    if cut:
+        parts.append(f"{cut}/{len(rows)} 篇正文只读到半截（续页没取到，见各条 `_pages_error`）")
+    if not parts:
+        return ""
+    return ("清单取回 %d 条，但%s；逐枚原因写在各条自己身上，"
+            "这些正文不能当成取全了用" % (len(rows), "、".join(parts)))
 
 
 def _attach_bodies(rows: list, arts: list) -> None:
@@ -844,7 +877,7 @@ def search_many(keywords: list, size: int = 5, read_body: bool = True,
 
     Returns:
         {"keywords","total","results","searched_at","source","_channel","_channels",
-         "_per_keyword","_from_cache","_how"?,"_filter_note"?,"_error"?}
+         "_per_keyword","_from_cache","_how"?,"_filter_note"?,"_error"?,"_partial_error"?}
         total 与 results 是**按 URL 去重后**的篇数与行；两枚词都命中的那一行带
         matched_keywords 列出是哪几枚。_per_keyword 逐词留命中数、通道与失败原因，
         合并不会把"某一词 0 条"抹掉。
@@ -864,6 +897,7 @@ def search_many(keywords: list, size: int = 5, read_body: bool = True,
     by_url: dict = {}
     searched_at = time.strftime("%Y-%m-%d %H:%M:%S")
     from_cache = False
+    partial = ""
     try:
         for i, word in enumerate(words):
             if i:
@@ -899,6 +933,7 @@ def search_many(keywords: list, size: int = 5, read_body: bool = True,
             _attach_bodies(rows, arts)
             if not how:
                 how = arts[-1].get("_how", "") if arts else ""
+            partial = _partial_note(rows)
     finally:
         if session is not None:
             session.close()
@@ -921,6 +956,8 @@ def search_many(keywords: list, size: int = 5, read_body: bool = True,
     }
     if how:
         out["_how"] = how
+    if partial:
+        out["_partial_error"] = partial
     notes = [f"「{p['keyword']}」{p['filter_note']}" for p in per if p["filter_note"]]
     if notes:
         out["_filter_note"] = "；".join(notes)

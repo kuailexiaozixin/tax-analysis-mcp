@@ -183,7 +183,25 @@ def search_wechat(keyword: str, size: int = 5, read_body: bool = False) -> dict:
         item["source_label"] = "实务解读"
         if not item.get("url"):
             continue
-    return {
+
+    # 逐枚失败必须汇到顶层。三个消费面读的都是顶层：`tax_related.search_practice_sources`
+    # 只看 `data.get("_error")`、`tax_aggregator.py:381` 只把顶层 `_error` 记进 errors、
+    # `tax_answer._rows_and_error` 也只看顶层——条目身上的 `_error` 谁也看不见。实测
+    # （2026-11-24 探针 `.tmp-inspect\partial_loss_surfaces.py`，双臂 × 三面）三枚里
+    # 两枚还原失败时，实务那一路交回 1 条而说明为空，调用方读成「网上只有 1 篇解读」；
+    # 三枚全失败时读成「网上没有解读」。那是红线⑦。
+    # 顶层 `_error` 的语义是「这一路整体没取到」，这里不借它：清单确实取回了，
+    # 只是逐枚的链接/正文没拿到——写成整体失败会把已取回的那几条一起作废。
+    lost_link = sum(1 for i in results if not i.get("url"))
+    lost_body = sum(1 for i in results
+                    if i.get("url") and read_body and not i.get("content"))
+    parts = []
+    if lost_link:
+        parts.append(f"{lost_link}/{len(results)} 条没还原出真实地址")
+    if lost_body:
+        parts.append(f"{lost_body}/{len(results)} 条没取到正文")
+
+    out = {
         "keyword": keyword,
         "total": len(results),
         "results": results,
@@ -191,6 +209,10 @@ def search_wechat(keyword: str, size: int = 5, read_body: bool = False) -> dict:
         "source": "微信公众号 (搜狗微信)",
         "_from_cache": False,
     }
+    if parts:
+        out["_partial_error"] = ("站点给了 %d 条，但%s（逐枚原因见各条的 `_error`）："
+                                 "这些条目不能当成完整的一轮用" % (len(results), "、".join(parts)))
+    return out
 
 
 def _restore_url(link: str, sess: "requests.Session") -> tuple[str, str]:
