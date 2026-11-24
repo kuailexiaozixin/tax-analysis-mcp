@@ -5,7 +5,8 @@
 本模块是缓存逻辑的**唯一实现**：`tax_search.py`（NPC 检索）、`tax_fgk.py`
 （总局法规库清单）、`tax_detail.py`（法规详情元数据）都从这里导入。
 
-默认关闭，开启后写入 ~/.cache/tax-analysis-skill，按 max_age(TTL, 秒) 失效。
+默认关闭，开启后写入 ~/.cache/tax-analysis-skill（或 TAX_CACHE_DIR 指定目录），
+按 max_age(TTL, 秒) 失效。
 
 命名空间：同一个缓存目录下会同时躺着检索清单、法规库清单、详情元数据。
 三者用 namespace 隔离，靠写盘时记下的 `_ns` 字段区分——**不是**靠文件名或
@@ -33,12 +34,21 @@ class CacheManager:
         enabled: 是否启用；关闭时 get 恒 miss、set 恒不写。
         namespace: 命名空间，划定 clear() / stats() 的作用范围，
             也记进条目里供日后核对来源。
+
+    落点：默认 ~/.cache/tax-analysis-skill，可用环境变量 TAX_CACHE_DIR 整体改道
+    （与 tax_cited.py 的 CACHE_DIR 同一枚变量，一处设定管住全部缓存形态）。
+    这枚出口不是给用户方便起见加的：2026-11-24 实测 tests/test_source_defects.py
+    每跑一遍就往用户真实目录漏 2 枚详情条目（id 形如 SHARED-OK-<12hex>，uuid
+    每次不同 ⇒ 只增不减，盘上已积 167 枚、占 detail 命名空间 94%），而
+    tests/run_all.py 的门禁是 subprocess 直跑单个测试文件，conftest.py 兜不住
+    那条路 ⇒ 只能让生产代码自己留一个可改道的口，测试在子进程入口设环境变量。
     """
 
     def __init__(self, enabled: bool = False, namespace: str = "default"):
         self._enabled = enabled
         self.namespace = namespace
-        self.dir = Path.home() / ".cache" / "tax-analysis-skill"
+        env_dir = os.environ.get("TAX_CACHE_DIR", "").strip()
+        self.dir = Path(env_dir) if env_dir else Path.home() / ".cache" / "tax-analysis-skill"
 
     @property
     def enabled(self) -> bool:
