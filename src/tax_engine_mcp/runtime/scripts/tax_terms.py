@@ -71,6 +71,27 @@ def doc_number_of(text: str) -> str:
     return doc_numbers(text)[0] if doc_numbers(text) else ""
 
 
+def strip_doc_numbers(text: str) -> str:
+    """把题面里所有文号摘掉再去空白，只留下"这份文件叫什么"。
+
+    为什么需要这一层：core_of_title 不认文号。站点给回的标题常不带文号
+    （「…免征增值税的通知」），用户点名时却常把文号写在前面或括号里
+    （「财税〔2012〕75号 …通知」），于是 title_identity 在字面上判不出这
+    是同一份文件——实测 7 组"同一份文件的多种写法"里，裸判就错 3 组。
+    摘掉文号再判，7 组只剩 1 组判不过（引用件自己那份标题确实还短一截，
+    判不过的代价是多跑一次检索，不是认错文件）。
+
+    为什么用 doc_numbers 逐枚 replace 而不是自己写正则、也不是只摘第一枚：
+    引用式标题里带着两枚文号（被引用的那份 + 它自己），doc_number_of 只给
+    第一枚，剩下的那枚留在串里照样把判据搅乱；实测自造正则还会在题面留下
+    「财」「（）」这类残字，判错数从 1 涨到 4。摘干净是这里的硬要求。
+    """
+    out = text or ""
+    for dn in doc_numbers(out):
+        out = out.replace(dn, "")
+    return re.sub(r"\s+", "", out)
+
+
 def cited_documents(text: str) -> list:
     """从题面里取出用户点名的文件：标题 + 文号。
 

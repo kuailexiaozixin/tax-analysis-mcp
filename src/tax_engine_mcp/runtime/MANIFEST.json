@@ -1,6 +1,6 @@
 {
   "engine": "tax-analysis",
-  "engine_version": "3.62.19",
+  "engine_version": "3.62.20",
   "files": {
     "data/contract_intake_template.json": "771e60f68a16cabb4515ffc691207c76e8f206a93ee64e1e1a20f2d98f158edf",
     "data/control_activities.json": "a7fe3bb0fa649581c7661107143870c1250a6b381e6964ee70aa1a37370ff839",
@@ -13,12 +13,12 @@
     "references/tax_risk_framework.md": "7ddd0305359c391930474b510196781fef862fcb4570219d57cfdbb2b7c24da1",
     "scripts/tax_aggregator.py": "922311af33262afed6e77ae2b0c910b3bc511a0884fa3cf6d082f5f371610f37",
     "scripts/tax_analyze.py": "cf421aa054639a0af3d53304f374c6684ceea7dc8663419d6437f2526daea313",
-    "scripts/tax_answer.py": "3bac990d532b51b633a1671e2ae3664d83492fb9e0d3c29571ff2db52210527c",
+    "scripts/tax_answer.py": "e0d675e5951ce8930cdf784c6949ca02909994d4bbb803deb1e4813bb5edade9",
     "scripts/tax_browser.py": "2b2a77ea2bdb90149b1e12a0e5c9c5df527fca537bf772350b6611a4c9946200",
     "scripts/tax_cache.py": "92bf884e34c9b133f5bbdd03bbea7b88390b8b27737e5f1ff2e03fba45d30ec4",
     "scripts/tax_calc.py": "3ff148d2c2c5a7340e0c9ad78f26ddfa5f0bb6b22bb80d6981eed80ae963f76a",
     "scripts/tax_cases.py": "da5659f36672926bc60677dec91153d08f38cae3bd5c4a7a74a9644972057f42",
-    "scripts/tax_cited.py": "2459983a0e3d33e181f85902c60d005aa815da568ee62f718699175cbbc8eaf3",
+    "scripts/tax_cited.py": "cec4f9b61b51c656c4089a6ea0a0df7f8a6640d5b16becb4f90052d525fcbbd9",
     "scripts/tax_control.py": "cb47664633d4b8c9527130a3f15ef313c5a109946d63c149877c253000a4dd7e",
     "scripts/tax_coverage.py": "5f010e7ec9d5b3757b32879aec9883359c8de1a8ad7aae2c8919e0977596b273",
     "scripts/tax_ctax.py": "2bc064ba099446d6f0480ae9053a3f740268031f965ded44274ae121190c9e74",
@@ -33,7 +33,7 @@
     "scripts/tax_search.py": "1f3c4ef898adb0d94821b96ac8b0910fd101f68c81cffd9518bed2587455cd99",
     "scripts/tax_shui5.py": "2dbaed80d56876b571e9d05888060692ef85e0648de36e723ef59be8e5cee5ae",
     "scripts/tax_sogou.py": "8c6a61f6818c791b7a5ff82aad91751a638dd412cbde83605cef98b7e039e512",
-    "scripts/tax_terms.py": "244897239141898450f78ca355977a29fc7cb364605a30623d469fb4b5443a91",
+    "scripts/tax_terms.py": "8d0c1627fbe64180d55d888807d41c672560a5ef2d2419d0ff2a21fa61aeaa88",
     "scripts/tax_web_search.py": "29e2dc366bd811e60686c5472a0392d2f6327f40355bd084b7f22a20bcf9f5f7",
     "scripts/tax_wechat.py": "d36904fa39b0bf3e49083e80fb3808a77d947b27a2c5b4a6c76c8bfa1819f934"
   }

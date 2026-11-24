@@ -447,17 +447,46 @@ def locate_cited_document(title: str, size: int = 6) -> tuple[list, list, str]:
     站点行为的假陈述，比沉默更糟。
     """
     # 缓存优先：这份点名的文件以前核实过原文地址（按文号存），直接复用、不打网络。
-    # 复用的前提仍是"标题确实是被点名的那一份"——缓存只记文号→链接，认不认还得靠
-    # title_identity 现判；判不过就丢弃缓存、照常检索，绝不让旧命中冒充点名目标。
+    # 复用的前提仍是"标题确实是被点名的那一份"——认不认靠 title_identity 现判，
+    # 判的是"这一轮点名的标题"与"这条地址当初核实下来时对应的标题"（缓存里存的
+    # title，见 tax_cited.get_cited_entry）。判不过就丢弃缓存、照常检索。
+    #
+    # 为什么必须拿缓存里的标题来判，而不是拿点名标题自己判：一枚文号能从两类完全
+    # 不同的标题里抽出来——被点名的那份，和"在标题里引用了被点名那份"的另一份
+    # （doc_number_of 取的是第一个文号，引用式标题的第一个文号恰恰是别人家的）。
+    # 2026-11-24 实测：缓存里种着 A 的链接，点名引用了 A 的 B，旧写法交回的是
+    # A 的地址却标着"标题字面同一"、零网络，compose 那句直接说"用户点名的文件
+    # 本身"。旧判据 `title_identity(title, title)` 是恒真式，从来没判过任何东西。
+    #
+    # 为什么两串都要先 strip_doc_numbers：core_of_title 不认文号，而用户点名时
+    # 常把文号写进题面、站点标题却不带——实测 7 组"同一份文件的多种写法"裸判错
+    # 3 组，摘掉文号后只剩 1 组判不过，而那组的代价是多跑一次检索、不是认错文件。
+    #
+    # 旧版本写的条目没有标题（空串）⇒ 判不了，一律不采信、照常检索；这一轮定位
+    # 成功后会把带标题的条目重写回同一个键，下次就能判了。
     dn = TT.doc_number_of(title)
     if dn:
-        hit = CITED.get_cited_link(dn, CITED_CACHE_PATH)
-        if hit:
-            row = {"title": title, "url": hit, "document_number": dn,
-                   "source": "文号链接缓存"}
-            if TT.title_identity(title, title) == "same":
-                row.update({"_title_match": 1.0, "_is_interpretation": False,
-                            "_cited_identity": "same", "_from_cache": True})
+        hit = CITED.get_cited_entry(dn, CITED_CACHE_PATH)
+        if hit["url"]:
+            # 缓存标题里带着**另一枚**文号 ⇒ 这条地址是从"引用了这枚文号的另一份
+            # 文件"身上核实下来的，不是这份的原文链接，一律不采信。
+            # 但"标题抽不出文号"不等于指向别的文件：实测离线清单 1892 条带文号键的
+            # 记录，题面能抽出文号的是 **0** 条（文号单独存在「发文字号」字段里），
+            # 站点标题普遍不带文号。所以空文号不作判断、交给下面的 title_identity
+            # 现判——写成 `cached_dn == dn` 会把整个离线预热闭环一次误杀。
+            cached_dn = TT.doc_number_of(hit["title"])
+            poisoned = bool(cached_dn) and cached_dn != dn
+            ident = (TT.title_identity(TT.strip_doc_numbers(title),
+                                       TT.strip_doc_numbers(hit["title"]))
+                     if hit["title"] else "")
+            if not poisoned and ident:
+                row = {"title": title, "url": hit["url"],
+                       "document_number": dn,
+                       "source": "文号链接缓存",
+                       "_title_match": round(TT.title_similarity(
+                           title, hit["title"]), 3),
+                       "_is_interpretation": False,
+                       "_cited_identity": ident, "_from_cache": True}
                 return [row], [dn], ""
 
     rows, tried, attempts = {}, [], []
@@ -488,7 +517,11 @@ def locate_cited_document(title: str, size: int = 6) -> tuple[list, list, str]:
                 rows[url] = row
     sim = {u: TT.title_similarity(title, row.get("title", ""))
            for u, row in rows.items()}
-    ident = {u: TT.title_identity(title, row.get("title", ""))
+    # 同一把尺：两串都先摘文号再判同一（理由同缓存优先段——题面夹文号会把
+    # "用户点名时带上文号、站点标题不带"这同一份文件判成不是）。sim 只管排序，
+    # 保留原始标题的读数不动。
+    ident = {u: TT.title_identity(TT.strip_doc_numbers(title),
+                                  TT.strip_doc_numbers(row.get("title", "")))
              for u, row in rows.items()}
 
     def _is_jiedu(row):
@@ -501,14 +534,16 @@ def locate_cited_document(title: str, size: int = 6) -> tuple[list, list, str]:
         row["_title_match"] = round(sim[row.get("url", "")], 3)
         row["_is_interpretation"] = _is_jiedu(row)
         row["_cited_identity"] = ident[row.get("url", "")]
-    # 定位成功且能归出文号、来源又是总局官方域——把这枚文号→原文链接落进缓存，
-    # 下次同名文件直接命中、零网络。判不过点名同一性的不落（免得把误命中的链接
-    # 供养成"下次一定对"），非官方域由 put_cited_link 自身拒收。
+    # 定位成功且能归出文号、来源又是总局官方域——把这枚文号→原文链接连同**标题**
+    # 一起落进缓存，下次同名文件命中后还判得出"是不是同一份"（读侧现判需要存的
+    # 标题，见缓存优先段）。判不过点名同一性的不落（免得把误命中的链接养成"下次
+    # 一定对"），非官方域由 put_cited_link 自身拒收。
     if out and out[0].get("_cited_identity"):
         top = out[0]
         top_dn = top.get("document_number") or TT.doc_number_of(top.get("title", ""))
         if top_dn and CITED.is_official(top.get("url", "")):
-            CITED.put_cited_link(top_dn, top["url"], CITED_CACHE_PATH)
+            CITED.put_cited_link(top_dn, top["url"], CITED_CACHE_PATH,
+                                 title=top.get("title", ""))
     # 把逐枚候选词的台账折成一档状态，附带给人看的原因摘要（compose 只认「｜」
     # 之前的档位词，后面那截是给读者的）。判定顺序即优先级：只要取到了条目就不算
     # "这一轮没捞着"（partial 那一档另有用途——它说这一轮的清单可能还不完整）；
