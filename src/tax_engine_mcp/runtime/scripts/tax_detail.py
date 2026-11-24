@@ -202,7 +202,15 @@ def get_download_url(bbbs_id: str, fmt: str = "docx") -> Optional[str]:
     走 _request，不直接 tax_http.get：这个端点就在 flk.npc.gov.cn 上，与检索、
     详情接口同一套限流。绕过节流与串行闸就是闸外的一条缝——两个进程
     各拿一个下载地址都会打进同一个站。
+
+    fmt 的白名单在这层挡（3.62.22 起）：实测站点只认 {docx, pdf}，其余取值
+    （zip、空串）静默回 docx 那条地址——与 format=docx 逐字符相同。命令行有
+    choices 挡着，库函数直调没有；用户要 zip 却拿到 docx，不说就是替他撒谎。
     """
+    if fmt not in ("docx", "pdf"):
+        raise ValueError(
+            f"NPC 下载端点只认 docx/pdf，收到 {fmt!r}；"
+            f"传其它值站点会静默回 docx 那条地址（实测 2026-11-24）")
     url = f"{BASE_URL}/law-search/download/pc?format={fmt}&bbbs={bbbs_id}"
     r = _request(url)
     data = r.json()
@@ -219,18 +227,56 @@ def download_bytes(bbbs_id: str, fmt: str = "docx") -> bytes:
 
     下载环节也在串行闸内：评测逐题取依据时会连发几十次，而"评测时不要并行
     打 NPC"这条规则靠人记迟早会忘——放进闸里就不必记了。
+
+    取不到地址时分三档报（3.62.22 起）。原先那句 `No download URL returned
+    for <id>` 把两件不同的事说成一件：这份法规确实没有该格式的附件（实测
+    碳排放权交易管理暂行条例有 docx、没 pdf，站点回 code=200 而 data 里无 url），
+    与库里根本没有这条 bbbs（data 键整个缺失，形状一模一样）。后者是"不存在"、
+    前者是"有这份但没这个格式"，混在一句里就是把没取到说成不存在（红线⑦族），
+    而且连用户要的哪个格式都没写。判据现拿 fetch_detail 的 oss_files——同一份
+    文件的"有没有这个格式"在详情端点也读得到；探测本身失败时退回不带结论的
+    那句话，绝不拿一次失败的探测去断"这份文件不存在"。
     """
     dl_url = get_download_url(bbbs_id, fmt)
     if not dl_url:
-        raise ValueError(f"No download URL returned for {bbbs_id}")
+        why = _missing_attachment_reason(bbbs_id, fmt)
+        raise ValueError(f"没拿到 {fmt} 的下载地址：{why}")
     with npc_gate:
         r = tax_http.get(dl_url, headers=HEADERS, verify=VERIFY_SSL, timeout=60)
     r.raise_for_status()
     return r.content
 
 
+def _missing_attachment_reason(bbbs_id: str, fmt: str) -> str:
+    """下载地址为空时，现判一句"为什么空"。判不出来就说判不出来。
+
+    只在失败路上走这一趟：换一句能区分"没这个格式"与"没这份文件"的话。
+    成本比看上去低——preview_law 与 download_file 在调它之前都已经取过详情，
+    这一趟命中的是 TTL 内的那份缓存，不多打一次站。
+    """
+    try:
+        detail = fetch_detail(bbbs_id)
+    except Exception as e:                            # noqa: BLE001
+        return (f"原因未能确认（探测详情失败：{type(e).__name__}: {e}）")
+    if not detail.get("title"):
+        return f"法规库里查不到这条 bbbs={bbbs_id}（详情端点回空标题）"
+    if not (detail.get("oss_files") or {}).get(fmt):
+        have = [k for k, v in (detail.get("oss_files") or {}).items() if v]
+        return (f"{detail['title']} 这份文件没有 {fmt} 附件"
+                + (f"，现有 {'/'.join(have)}" if have else "，两种附件都没有"))
+    return (f"{detail['title']} 的详情里写着有 {fmt} 附件，"
+            f"下载端点却没给地址（两端读数相左，以本次下载失败为准）")
+
+
 def download_file(bbbs_id: str, fmt: str = "docx", output_path: Optional[str] = None) -> str:
-    """Download a law document and save to disk."""
+    """Download a law document and save to disk.
+
+    扩展名跟着 fmt 走，而 fmt 的白名单在 get_download_url 那层就挡死了：
+    3.62.22 之前这里是 `ext = "docx" if fmt == "docx" else "pdf"` 的二分式猜——
+    传 fmt="zip" 时站点实际吐 docx 字节，这句 else 却给它挂上 .pdf 的名字，
+    内容与扩展名一起说谎，落盘的文件用任何阅读器打开都报错。现在这种组合
+    在取地址那一步就报 ValueError，走不到落盘。
+    """
     content = download_bytes(bbbs_id, fmt)
 
     detail = fetch_detail(bbbs_id)
