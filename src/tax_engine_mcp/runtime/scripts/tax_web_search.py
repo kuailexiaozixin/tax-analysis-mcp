@@ -88,6 +88,17 @@ AGING_VALUES = ("全文有效", "已修改", "全文失效", "全文废止", "�
 EFFECT_LEVEL_VALUES = ("法律", "行政法规", "国务院文件", "税务部门规章",
                        "税务规范性文件", "财税文件", "其他文件", "工作通知")
 
+# 八档效力等级里有三档名下**根本不录时效**，与 xxgkAging 同发必然 0 条。
+# 2026-11-25 二十四发实测（检索词「增值税」× FILE_LABELS 基线 1910，逐发间隔 2.6 秒，
+# 读 searchResultAll.total 与同格 agingList；另换「留抵退税」基线 58 交叉复认三档同发仍为 0）：
+#   单发带时效桶的五档 —— 同发正常：法律 9→8、行政法规 10→7、国务院文件 9→7、
+#                          税务部门规章 30→15、税务规范性文件 681→216（配「全文有效」）
+#   单发只有空桶的三档 —— 同发归零：财税文件 637（agingList 空串 462 + "null" 191）→ 0、
+#                          其他文件 62（只有空串 63）→ 0、工作通知 190（只有空串 190）→ 0
+# 归零跟着效力等级这一族走、不跟着检索词走，所以能在发之前判死：这三档一旦与时效同拼，
+# 接口回的是 total=0，与「这一维确实筛空了」「库里没有」在响应里同一个形态。
+AGING_UNRECORDED_LEVELS = ("财税文件", "其他文件", "工作通知")
+
 # orderBy 的取值与实测语义。日期倒序是 1，不是别处文档写的 2：发 1 时三个检索词的
 # 成文日期序列都单调递减（增值税自 2026-09-04 起、小微企业、研发费用同）；发 2 时
 # 首屏日期在 2026-01-30 与 2026-02-10 之间来回跳，且同一类别先聚到一起，它排的是类别。
@@ -178,7 +189,9 @@ def build_filters(in_title: bool = False, precise: bool = False,
     是带空格的，用户很可能直接抄过来，所以这里替他去空格。
 
     Raises:
-        ValueError: 日期/年份/编号格式不合法，或时效/效力等级不在实测过的取值域里
+        ValueError: 日期/年份/编号格式不合法；时效或效力等级不在实测过的取值域里；
+            或时效与 AGING_UNRECORDED_LEVELS 那三档效力等级同发——那三族条目名下
+            不录时效，一起发必回 0 条，而这与"库里没有"长得一模一样。
     """
     out: dict = {}
     if in_title:
@@ -209,6 +222,17 @@ def build_filters(in_title: bool = False, precise: bool = False,
             raise ValueError(f"effect_level 只认 {EFFECT_LEVEL_VALUES}，收到 "
                              f"{effect_level!r}")
         out["xxgkEffectLevel"] = e
+    # 两维同发的程序拦截：判据与逐档读数见上面 AGING_UNRECORDED_LEVELS 那段。
+    # 只拦这三档，另外五档同发是正常交集（实测法律 9→8、税务规范性文件 681→216），
+    # 一并拦掉就是把能用的组合也堵死。
+    if "xxgkAging" in out and out.get("xxgkEffectLevel") in AGING_UNRECORDED_LEVELS:
+        raise ValueError(
+            f"effect_level={out['xxgkEffectLevel']!r} 这一族条目名下不录时效，"
+            f"与 aging={out['xxgkAging']!r} 同发必然回 0 条（2026-11-25 二十四发实测："
+            "财税文件 637、其他文件 62、工作通知 190 单发都有货，配任一时效值都归零）——"
+            "两个一起筛要换一个维度：按效力等级取清单就别带时效，时效回来读条目里的 "
+            "status；确实要「现行有效的某族文件」，用 tax_type 那一维配时效（实测 "
+            "xxgkSonTaxPolicy=增值税 + 全文有效 正常给 159）")
     if doc_type:
         out["docType"] = re.sub(r"\s+", "", doc_type)
     if doc_year:
@@ -500,8 +524,10 @@ def add_filter_args(parser):
     g.add_argument("--aging", default="", metavar="时效",
                    help="时效分面，只认 %s（xxgkAging）" % "、".join(AGING_VALUES))
     g.add_argument("--effect-level", default="", metavar="效力等级",
-                   help="效力等级分面，只认 %s（xxgkEffectLevel）"
-                        % "、".join(EFFECT_LEVEL_VALUES))
+                   help="效力等级分面，只认 %s（xxgkEffectLevel）；与 --aging 同发时，"
+                        "%s 这三档名下不录时效，会被直接拦下"
+                        % ("、".join(EFFECT_LEVEL_VALUES),
+                           "、".join(AGING_UNRECORDED_LEVELS)))
     g.add_argument("--order", default="relevance", metavar="序",
                    choices=sorted(ORDER_VALUES),
                    help="排序：relevance（默认）/ date_desc（成文日期最新在前）/ "
