@@ -264,6 +264,62 @@ def build_filters(in_title: bool = False, precise: bool = False,
     return out
 
 
+def column_unhonoured(column: Optional[str], payload: dict) -> bool:
+    """发了栏目号码、站点却没认这个值——判据只有一条：响应根上的回显。
+
+    实测（2026-11-25，九路对照，逐发读数见 references/source_defects.md 的
+    「案例通道实测台账」栏目维那一行与 search_source/chinatax/NOTE.md）：
+
+    - `column=5739`（总局概况，这一主题下真 0 条）⇒ `columnId="5739"`、
+      `column="总局概况"`、total=0。**认了，且确实是空栏目。**
+    - `column=9999` / `0` / `-1`（不存在的号码）⇒ HTTP 200 但**响应体 0 字节**，
+      连 JSON 都不是；这一档在 `r.json()` 那一步就回 _error，走不到这里。
+    - `column=abc`（不是号码）⇒ 合法 JSON、total=0、**`columnId` 为 None**、
+      `column` 原样回显 "abc"。
+    - `column=不存在的栏目名` ⇒ 同上：total=0、`columnId=None`、回显原样。
+
+    所以「发了号码而 `columnId` 不等于它」就是站点没认这个值，不能读成
+    「这个栏目里没有」。这一判据只用于**发出去的是号码**（纯数字串）的场合：
+    名字那一维（`column=政策法规` 这类分面名）认了也不回 `columnId`——实测
+    `column=政策法规` 回 total=41 而 `columnId=None`，所以发名字时分不清
+    「没认」与「确实没有」，这里一律回 False，不假装能判。
+
+    不写进判据的两枚读数：`classification` 缺 `style` 键只分得出走没走号码
+    那条路（abc 与不存在的栏目名都缺，5739 真 0 条不缺），但它与 columnId
+    同源、不如 columnId 直白；响应字节数（无效值 1.0–1.1 万 vs 合法号 2.3 万）
+    是脆弱读数，改版就漂。
+    """
+    if not column or not column.strip().isdigit():
+        return False
+    if not isinstance(payload, dict):
+        return False
+    return str(payload.get("columnId") or "") != column.strip()
+
+
+def column_echo_absent(column: Optional[str], payload: dict) -> bool:
+    """发的是栏目名（或乱写的值）而响应没回显 columnId——这一维认没认，程序分不出。
+
+    与上一枚判据是一对：`column_unhonoured` 只在发号码时下硬结论，这一枚负责
+    把「发名字取到 0 条」这种**分不清**的情形说出口，不假装能判。实测依据
+    （2026-11-25，probe32g/32h/32i）：
+
+    - `column=政策法规`（分面里的名字、不在 columns 表里）⇒ total=41、
+      **columnId=None**、`column` 原样回显。这一维认了，也不回 columnId。
+    - `column=abc` 与 `column=不存在的栏目名` ⇒ 同样 columnId=None、原样回显，
+      与上面那一发**同形**。
+    - `column=5739`（表里的合法号、这一主题下真 0 条）⇒ **columnId='5739'**。
+
+    所以名字那一维的 0 条，既可能是「这个栏目真没有」，也可能是「站点没接这个
+    名字」，程序拿不到区分依据（classification 缺 style 那一枚与字节数都不稳）。
+    判据只说「分不清、换号码重发」，不说哪一种是真相。
+    """
+    if not column or column.strip().isdigit():
+        return False
+    if not isinstance(payload, dict):
+        return False
+    return not str(payload.get("columnId") or "")
+
+
 def search_chinatax(keyword: str, page: int = 1, size: int = 10,
                     filters: Optional[dict] = None, file_only: bool = True,
                     order: str = "relevance", column: Optional[str] = None) -> dict:
@@ -282,6 +338,16 @@ def search_chinatax(keyword: str, page: int = 1, size: int = 10,
         column: 栏目号，如 "5741"（新闻发布）。默认 None 与原行为一致——发空串
             等于不限栏目。要用栏目收窄时给值；这一维与 label 不一样：实测
             2026-10-04 发 column=5741 时「骗取出口退税」189 条收窄到 119 条。
+            2026-11-25 把整张栏目表量到手（响应根上 columns 那八枚）：
+            5738 全部 / 5739 总局概况 / 5740 信息公开 / 5741 新闻发布 /
+            5742 税收政策 / 5743 纳税服务 / 5744 税务视频 / 5745 互动交流，
+            同一检索词「骗取出口退税」发 5742 得 7 条、发 5745 得 8 条——旧记录
+            那句「税收政策栏仅 7、互动 8」当场对上，只是当时号没取到。三件事要记：
+            ①发号码与发栏目名同效（column=税收政策 与 column=5742 都回 7 条，
+            站点自己把名字换成号并回显 columnId）；②「全部」不是并集，单栏能大于
+            不限栏目（5743 配「增值税」回 13376 > 基线 13225）；③发了号码而响应
+            columnId 没回显它，是站点没认这个值，不是栏目里空——判据见
+            column_unhonoured，这一路的 0 条写成 _empty_reason、不打 _zero_hit。
             label 收的是条目自带的标签名（响应分面 labelList 那 159 桶里的名字），
             发这一桶里不存在的名字回 0 条、不回基线：2026-10-20 复测「增值税」
             发 label=新闻 回 0，换成站点真实的那枚「新闻发布」回 2 条。所以案例
@@ -427,6 +493,25 @@ def search_chinatax(keyword: str, page: int = 1, size: int = 10,
                 f"接口报告命中 {total} 条，第 {page} 页却没给条目清单"
                 f"（该页在末页之内，不是翻页越界）；换一个检索词再取一轮"
                 f"才有结论，不能据此说库里没有")
+    # 发了栏目号码却 0 条，而响应没把这一维认回去（columnId 不等于发出去的号）：
+    # 站点根本没按这一维筛，"0 条"说的是它没接这个值，不是栏目里没有。3.62.32
+    # 实测的三种无效写法（9999 走 0 字节 _error、abc 与不存在的栏目名走这里）
+    # 与真 0 条的合法号（5739 回显 columnId='5739'）就是靠这一支分开的。
+    # 这一支不打 _zero_hit：那枚键的语义是"本轮请求成功、答案真是 0 条"。
+    elif column_unhonoured(column, payload) and not out.get("_error"):
+        out["_empty_reason"] = (
+            f"发出的栏目号 {column} 没有被站点认下（响应 columnId 没回显它）："
+            f"这一路的 0 条说的是接口没接这个值，不是「{column}」栏目里没有；"
+            f"栏目号与栏目名以响应根上 columns 那张表为准，改值重发才有结论")
+    # 发的是栏目名而响应不回显 columnId：这一维认没认，程序拿不到区分依据。
+    # 实测「政策法规」（认，回 41 条）与「不存在的栏目名」（不认，回 0 条）在
+    # columnId 这一枚上同形，所以只能说分不清，不能替站点选一种。
+    elif column_echo_absent(column, payload) and not out.get("_error"):
+        out["_empty_reason"] = (
+            f"发出的栏目名「{column}」这一维站点没有回显 columnId，"
+            f"所以这一路的 0 条分不清是「这个栏目真没有」还是「接口没接这个名字」"
+            f"（实测合法栏目名与乱写的名字都不回 columnId）；改用响应根上 columns "
+            f"那张表里的栏目号重发才分得开")
     # 传了收窄维度却 0 条，且不是请求失败。接口对拼窄与库里真没有给的是同一个
     # total=0，程序分不出，只能把这句话递出去，让上层决定放宽哪一维——别把
     # "这一维拼过头"当成"库里没有这份文件"。实测效力等级 × 时效两维同时发必然 0。
@@ -626,6 +711,10 @@ def main():
         print(f"⚠️  {result['_error']}")
     if result.get("_filter_note"):
         print(f"ℹ️  {result['_filter_note']}")
+    # 栏目号没被站点认下时，"命中 0 条"是最容易读错的一行：成因句要当场可见，
+    # 不能只躺在 --json 里（3.62.32 那一路的判据在 column_unhonoured）。
+    if result.get("_empty_reason"):
+        print(f"ℹ️  {result['_empty_reason']}")
     if result.get("_keyword_note"):
         print(f"ℹ️  {result['_keyword_note']}")
     print(f"命中 {result['total']} 条，取回 {len(result['results'])} 条\n")
