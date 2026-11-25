@@ -136,9 +136,20 @@ def search_wechat(keyword: str, size: int = 5, read_body: bool = False) -> dict:
         # 都不带这枚标记。原先一句"检索结果为空或页面结构已变"把两者捏在一起，
         # 于是**合法的零命中也被报成取数失败**（聚合层 tax_aggregator.py:381
         # 只认 _error 就记进 errors）——那是反向的错：把"没有"说成"失败"。
+        #
+        # 3.62.33 起再分出第三态：**HTTP 200 但正文 0 字节**。2026-11-25 与
+        # 11-26 两轮实测（五枚词各一发、另四档对照与真浏览器同址）：任何词都回
+        # 200 / 0 字节 / `Content-Type: text/plain`，连 11-24 有结果的词与真 0
+        # 命中的词都一样；真浏览器同址也是空白页（`browser_snapshot` 零节点、网络
+        # 面板只剩 favicon）。这既不是"0 命中"（那样会带 noresult 标记），也不是
+        # "页面改版"（改版至少给一份 HTML）——是站点侧这一路当天断供。三种成因
+        # 压成一句话，读者会照着去排查改版与验证页，白跑一趟。
+        if not r.content:
+            return _empty(keyword, "搜狗微信回的是 HTTP 200 但正文 0 字节：这一路当天没给页面"
+                                  "（不是这一栏查不到，也不是页面结构变了——那两种都至少回一份 HTML）")
         if NO_RESULT_MARK in r.text:
             return _empty(keyword)
-        return _empty(keyword, "搜狗微信返回的页面既没有结果块也没有无结果提示：可能改版或落在验证页")
+        return _empty(keyword, "搜狗微信返回的页面有内容，但既没有结果块也没有无结果提示：可能改版或落在验证页")
 
     results = []
     for block in blocks:
