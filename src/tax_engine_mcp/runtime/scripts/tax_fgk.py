@@ -693,8 +693,11 @@ def _scan_list(keyword: str, size: int, max_pages: int,
             }
             # 文号、时效、效力级别都从接口的录入项带下来。缺了这三栏，法规库
             # 条目每条都只能报"时效未标明"，定级环节就没法把 2026 年新发的
-            # 公告和已被废止的公告分开。
-            for k in ("status", "status_from", "effect_level", "publish_date"):
+            # 公告和已被废止的公告分开。status_note 是 3.62.29 加的：清单层的
+            # xxgk_abolishDate 恒空，废止依据与日期只在 xxgk_description 那一栏，
+            # 不在这里透传，法规库这一路就仍然只剩一句"这一栏没录入"。
+            for k in ("status", "status_from", "effect_level", "publish_date",
+                      "status_note", "status_note_from"):
                 if item.get(k):
                     entry[k] = item[k]
             if item.get("attachments"):
@@ -1000,6 +1003,13 @@ def main():
             print(f"     日期: {item['date']}")
         if item.get("publisher"):
             print(f"     发文机关: {item['publisher']}")
+        # 时效与处置说明要当场看得见。「这条现在还作不作数、哪天被谁废止」是读
+        # 一条法规库清单时最该在这一屏看到的一行，只放进 --json 等于让命令行
+        # 的人退回抠正文（废止日期那一栏接口恒空，依据只在 xxgk_description）。
+        if item.get("status"):
+            print(f"     时效: {item['status']}")
+        if item.get("status_note"):
+            print(f"     处置: {item['status_note']}")
         print(f"     {item['url']}")
         for att in item.get("attachments") or []:
             print(f"     附件: {att['name']}（{att['url']}）")

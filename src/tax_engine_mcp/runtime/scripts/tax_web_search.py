@@ -308,6 +308,9 @@ def search_chinatax(keyword: str, page: int = 1, size: int = 10,
         补一句 _filter_note 说明是维度拼窄了还是库里真没有。
         检索词含多枚词而首屏标题缺其中一枚时补一句 _keyword_note：search5 对
         空格拼串按任一词命中，这一句只用已经取回的这一页算，不多发请求。
+        条目侧的 status_note（3.62.29）是接口录入项 xxgk_description 的原文，
+        装「依据哪份文件、从哪天起全文废止/失效/被修改」；这一栏不结构化，
+        判某日是否已废止仍要读正文或走现行/废止版配对，理由见 _status_note_of。
     """
     if order not in ORDER_VALUES:
         raise ValueError(f"order 只认 {tuple(ORDER_VALUES)}，收到 {order!r}")
@@ -385,6 +388,12 @@ def search_chinatax(keyword: str, page: int = 1, size: int = 10,
         atts = _attachments(it.get("appendix"))
         if atts:
             row["attachments"] = atts
+        # 时效处置说明（xxgk_description）：这一栏装的是「依据哪份文件、从哪一天
+        # 起全文废止／失效／被修改」的站点原文，判据与限长见 _status_note_of。
+        note = _status_note_of(it.get("xxgk_description"))
+        if note:
+            row["status_note"] = note
+            row["status_note_from"] = "法规库录入项 xxgk_description"
         results.append(row)
 
     out = {
@@ -468,6 +477,34 @@ def aging_of(raw) -> str:
     """把接口的 xxgk_aging 归一成状态文本或空串。"""
     text = str(raw or "").strip()
     return "" if text.lower() in _AGING_BLANKS else text
+
+
+# xxgk_description 的截断长度。2026-11-25 六发 54 条实测（`.tmp-inspect\probe29c.py`）
+# 最长的一条是「已修改」档的逐条修改史，983 字符；全文废止档最长 372。清单层要的是
+# 「依据哪份文件、哪天废止」这一句，不是整部修改史，200 字符够装下依据文号加日期
+# （实测最长的那句废止依据 157 字符），再长就是多条列举，指回详情页看。
+STATUS_NOTE_LIMIT = 200
+
+
+def _status_note_of(raw) -> str:
+    """把接口的 xxgk_description 归一成时效处置说明或空串。
+
+    这一栏不是结构化的废止日期字段：全文废止/已修改/全文失效三档装的是「根据
+    《某决定》（某文号），自某年某月某日起，全文废止」这类站点原文；全文有效档
+    偶尔装的是立法与施行沿革（实测增值税|全文有效首屏 10 条只有 1 条有值，就是
+    「2024年12月25日…通过 自2026年1月1日起施行」）；文字政策解读与政策指引两档
+    实测 10/10 全空。所以这里**只带原文、不抠日期**——把沿革句里的施行日读成
+    废止日就是编造，判某日是否已废止仍要读正文或走现行/废止版配对。
+
+    空值写法与 xxgk_aging 同族：空串与字符串 "null"（六发 54 条里没有空白串、
+    没有 "-"），照原样带上下游会把 "null" 当成一句处置说明引用出去。
+    """
+    text = _clean(str(raw or ""))
+    if not text or text.lower() in _AGING_BLANKS:
+        return ""
+    if len(text) <= STATUS_NOTE_LIMIT:
+        return text
+    return text[:STATUS_NOTE_LIMIT] + "…（原文更长，见详情页）"
 
 
 def _first_match(pattern: re.Pattern, text: str) -> str:
@@ -601,6 +638,12 @@ def main():
             print(f"     日期: {item['date']}")
         if item.get("publisher"):
             print(f"     来源: {item['publisher']}")
+        # 时效与处置说明不打出来，读者就只能去 --json 里翻：而「这条现在还作不
+        # 作数、哪天被谁废止」正是看一条清单时最该当场看到的一行。
+        if item.get("status"):
+            print(f"     时效: {item['status']}")
+        if item.get("status_note"):
+            print(f"     处置: {item['status_note']}")
         if item.get("snippet"):
             print(f"     摘要: {item['snippet'][:100]}")
         print(f"     {item['url']}")
