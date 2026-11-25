@@ -51,6 +51,10 @@ npc_business_error()/require_npc_ok() 管第四件事："状态码没说话、�
 NPC 三个接口出错时 HTTP 仍是 200，只把失败写在 JSON 的 code/msg 里；判据一旦各写
 一份，早晚会有一处漏掉（本层正是为 short_reason 的"三处重复必漂移"而立）。它不碰
 requests，只读已经解析好的 dict，所以自管 Session 的模块照样能共用。
+
+court_business_error()/require_court_ok() 管同一件事的另一族：法院两站（裁判文书网、
+人民法院案例库）。同形不同值——NPC 认 code=200 为成功，这两站认 code=0 为成功，
+所以两把尺不能合成一把，实测读数写在函数注释里。
 """
 
 import os
@@ -480,6 +484,60 @@ def npc_business_error(data: dict) -> Optional[str]:
 def require_npc_ok(data: dict) -> None:
     """npc_business_error 的抛错版：给"空结果必须能跟接口失败分开"的取数路径用。"""
     reason = npc_business_error(data)
+    if reason:
+        raise RuntimeError(reason)
+
+
+def court_business_error(data: dict) -> Optional[str]:
+    """判一个 HTTP 200 的法院站信封是不是业务失败。是，就回一句带原因的话；不是，回 None。
+
+    与 npc_business_error 同一族病症、不同的成功值，**不能合并**。实测（2026-11-25）：
+      人民法院案例库 POST /cpws_al_api/api/cpwsAl/search 匿名四发，
+        全部 HTTP 200 / 30 字节 / 无 cookie，正文 {"msg":"未登录","code":401}；
+        同站 searchTop10、getGroupDatas、左侧聚类同样 30 字节 {"msg":"未登录","code":401}
+        （只有 recordSearchLog 是 HTTP 401 加同一句），补 UA/Referer/X-Requested-With 不松。
+        它健康时按前端 list.js 的判据是 code == '0' 且 data.datas、data.totalCount 都在。
+      中国裁判文书网 POST /website/parse/rest.q4w 三发（空 body、只带 construct、
+        带明文假 ciphertext+真 queryCondition 各一次），
+        全部 HTTP 200 / 76 字节 {"code":9,"description":null,"secretKey":null,
+        "result":null,"success":false}；/api/fp/* 三枚 200 回 0 字节；
+        /down/isDown 200 回 {"msg":"文书解码失败，无法下载!","code":1}。
+        它健康时是 {"code":0,"success":true,"result":{…}}。
+    所以这一族的判据是"success 显式为 False，或 code 归一化后 != 0"。
+    NPC 那边成功值是 200，把这份判据套过去会把每条正常响应拦下来；反过来把
+    npc_business_error 套到这里，案例库健康响应的 code=0 会被当成 falsy 漏判或误判
+    （实测确认：npc_business_error 对 {"msg":"获取成功！","code":0} 会报业务失败）。
+    两个入口本机一次请求都没发过的时候，这一族不存在；现在量过了，判据先备好，
+    真接入时直接用，不必再各自手写一遍再漂移。
+    信封没有 code 也没有 success 键的照旧放行（老式/未鉴权探针用法）。
+    """
+    if not isinstance(data, dict):
+        return None
+    if data.get("success") is False:
+        return (f"法院站回 HTTP 200 但业务失败（success=false，"
+                f"code={data.get('code')}）：这不是「没有命中」——"
+                f"裁判文书网的检索参数要前端 DES3 现算（strToBinary.js 里的 cipher()），"
+                f"缺这枚参数接口只会回这条，不会回空清单；别把它当 0 条往下答。")
+    code = data.get("code")
+    if code is None:
+        return None
+    try:
+        norm = int(str(code).strip())
+    except (TypeError, ValueError):
+        norm = code
+    if norm == 0:
+        return None
+    return (f"法院站回 HTTP 200 但业务失败（code={code}，"
+            f"msg={str(data.get('msg') or data.get('description'))[:80]!r}）："
+            f"这一族的墙在接口层、不在页面层——"
+            f"人民法院案例库匿名一律 code=401「未登录」，"
+            f"裁判文书网要前端加密参数、缺了回 code=9。"
+            f"这不是「库里没有」，是把没连上写成了没有。")
+
+
+def require_court_ok(data: dict) -> None:
+    """court_business_error 的抛错版：法院站取数路径用，把墙变成异常而不是空清单。"""
+    reason = court_business_error(data)
     if reason:
         raise RuntimeError(reason)
 
