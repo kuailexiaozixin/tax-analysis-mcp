@@ -41,7 +41,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import tax_web_search as tws  # noqa: E402
-from tax_http import short_reason  # noqa: E402
+from tax_http import short_reason, is_fetch_failure  # noqa: E402
 
 #: 案例集中出现的栏目号（新闻发布）。台账第一条收窄判据用它。
 CASE_COLUMN = "5741"
@@ -383,9 +383,9 @@ def collect(topic: str, elements=(), mode: str = "exhaustive",
         while True:
             res = fetch(q["word"], page=page_n, file_only=False,
                         order=order, column=CASE_COLUMN)
-            if res.get("_error"):
+            if is_fetch_failure(res):
                 failures.append({"word": q["word"], "page": page_n,
-                                 "error": res["_error"]})
+                                 "error": res.get("_error") or "取数失败"})
                 break
             items = res.get("results") or []
             for row in items:
@@ -415,9 +415,9 @@ def collect(topic: str, elements=(), mode: str = "exhaustive",
         # 线索与判决书全文的所在，不能替代官方通报那一层。
         for q in queries:
             res = shui5_fetch(q["word"])
-            if res.get("_error"):
+            if is_fetch_failure(res):
                 failures.append({"word": q["word"], "page": 1,
-                                 "error": f"税屋：{res['_error']}"})
+                                 "error": f"税屋：{res.get('_error') or '取数失败'}"})
                 continue
             items = res.get("results") or []
             for row in items:

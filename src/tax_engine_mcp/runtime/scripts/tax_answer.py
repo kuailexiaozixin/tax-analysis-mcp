@@ -38,6 +38,7 @@ import tax_analyze as A
 import tax_cited as CITED
 import tax_evidence as E
 import tax_fgk as FGK
+import tax_http as H
 import tax_search as T
 import tax_shui5 as S5
 import tax_sogou as SG
@@ -291,11 +292,17 @@ def _rows_and_error(r: dict) -> tuple[list, str, str]:
     条一起作废（说成整轮没取到）；完全不并，2026-11-24 探针
     `.tmp-inspect/partial_loss_surfaces.py` 实测三个消费面全静默——空正文条目照常
     进 evidence，读者看是「这几篇都核过了」。所以行照常交出、说明另带一枚。
+
+    3.62.26 起第二枚不再直接读 `_error`，改读 `tax_http.is_fetch_failure`：
+    法规库「翻完前 N 页未筛出条目」那一档也写 `_error`，它是扫描结论而不是故障，
+    按老写法会被 `gather` 记进 `errors` 与 `rounds_done[].failed`，读者于是看到
+    一条假「取数失败」，接着按失败去补查、越补越空。源侧统一打 `_zero_hit`／
+    `_fetch_failed` 两枚键之后，这里认键不认文本；没打键的信封仍按「有 `_error`
+    就是失败」兜底——多报一次失败看得见，少报一次是静默。
     """
-    err = r.get("_error") or ""
-    if err:
-        return [], err, ""
     rows = r.get("results", [])
+    if H.is_fetch_failure(r):
+        return [], (r.get("_error") or "取数失败"), ""
     return rows, "", (r.get("_partial_error") or "" if rows else "")
 
 

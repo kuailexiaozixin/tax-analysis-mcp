@@ -784,6 +784,10 @@ def _scan_list(keyword: str, size: int, max_pages: int,
     elif not results:
         # 带了收窄维度却一条法规库条目都没有：优先把"维度拼窄"那句递出去，
         # 它比"翻完 N 页未筛出"更接近真相——0 可能是维度拼的，不是库里没有。
+        # 两支都是"请求成功了、答案是 0 条"，所以都打 _zero_hit：_error 那两句
+        # 是扫描结论，不是故障。不打这一枚，消费面（tax_answer._rows_and_error、
+        # 聚合层）只认 _error 非空，就会把"翻完没筛出"报成"取数失败"。
+        result["_zero_hit"] = True
         if filter_note:
             result["_error"] = filter_note
             result["_filter_note"] = filter_note

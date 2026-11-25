@@ -45,6 +45,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from tax_search import search_tax, check_iso_date, DATE_FLOOR, DATE_CEIL
+import tax_http as H
 from tax_web_search import search_chinatax, build_filters, label_scope_text
 from tax_sogou import sogou_search
 from tax_shui5 import search_shui5
@@ -399,8 +400,11 @@ def aggregate_search(keyword: str, *,
             continue
         # 源自己回报"取不到"（被拦、接口异常）时要进 errors：
         # source_summary 里的 0 条只说明没拿到，不说明该源没有内容。
-        if data.get("_error"):
-            errors[source] = data["_error"]
+        # 3.62.26：判据换成 tax_http.is_fetch_failure。法规库那一档"翻完 N 页
+        # 未筛出条目"也写 _error，它是扫描结论；老写法把这一源整个记成故障，
+        # 前端与 CLI 于是同时显示"税屋 0 条 + 取数失败"，读者分不清哪种 0。
+        if H.is_fetch_failure(data):
+            errors[source] = data.get("_error") or "取数失败"
         if data.get("_partial_error"):
             # 清单取到了、逐枚正文/地址没取全：这一档不是"该源没取到内容"，
             # 所以要单独记，别让条目带着空正文混进 items 后没人知道。

@@ -212,6 +212,12 @@ def search_wechat(keyword: str, size: int = 5, read_body: bool = False) -> dict:
     if parts:
         out["_partial_error"] = ("站点给了 %d 条，但%s（逐枚原因见各条的 `_error`）："
                                  "这些条目不能当成完整的一轮用" % (len(results), "、".join(parts)))
+    elif not results:
+        # 走到这里说明结果块是有的（否则前面 NO_RESULT_MARK 或改版那句先返回），
+        # 却一枚直链都没解析出来：那是页面结构变了，不是站内 0 条。原来这一支
+        # 回的是"total=0 且没有任何说明"，三个消费面全读成"确实没有解读"。
+        out["_error"] = "搜狗微信返回了结果块，但一枚真实地址都没解析出来：页面结构可能改版"
+        out["_fetch_failed"] = True
     return out
 
 
@@ -301,7 +307,11 @@ def _fmt_ts(ts: str) -> str:
 
 
 def _empty(keyword: str, error: str = "") -> dict:
-    return {
+    """空结果信封。3.62.26 起按统一出口标记契约分流：带 error 的是请求层面
+    的失败（HTTP 非 200、被反爬、页面改版认不出结构），打 `_fetch_failed`；
+    不带 error 的是这一轮检索成功、答案就是 0 条，打 `_zero_hit`。
+    两枚都不打的中间态不存在——调用方要么给了说明要么没给。"""
+    out = {
         "keyword": keyword,
         "total": 0,
         "results": [],
@@ -310,6 +320,11 @@ def _empty(keyword: str, error: str = "") -> dict:
         "_error": error,
         "_from_cache": False,
     }
+    if error:
+        out["_fetch_failed"] = True
+    else:
+        out["_zero_hit"] = True
+    return out
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────

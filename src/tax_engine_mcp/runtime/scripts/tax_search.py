@@ -948,6 +948,12 @@ def search_tax(keyword: str, *,
             dropped=date_dropped, kept=len(results),
             source_total=date_widened_total)
 
+    # NPC 这一路失败是抛异常（require_npc_ok / npc_business_error），能走到这里
+    # 就说明请求成功了。请求成功而答案是 0 条，就是契约里的合法空档：打上
+    # _zero_hit，消费面才不会把"这一词库里没有"读成"这一源取数失败"。
+    if not results:
+        result["_zero_hit"] = True
+
     _cache.set(cache_key, result)
     return result
 

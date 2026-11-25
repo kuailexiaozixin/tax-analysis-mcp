@@ -407,7 +407,7 @@ def _parse(html: str, site: str = "", size: int = 10) -> tuple[list, int, bool]:
 
 def _payload(keyword: str, site: str, rows: list, searched_at: str,
              from_cache: bool = False) -> dict:
-    return {
+    out = {
         "keyword": keyword,
         "site": site,
         "total": len(rows),
@@ -416,12 +416,26 @@ def _payload(keyword: str, site: str, rows: list, searched_at: str,
         "source": SOURCE_NAME,
         "_from_cache": from_cache,
     }
+    # 空清单一律带 _zero_hit，缓存命中那一路也不例外：否则同一轮"0 条"
+    # 第一次有键、第二次从缓存回来没键，消费面两次读出的性质不一样。
+    if not rows:
+        out["_zero_hit"] = True
+    return out
 
 
 def _empty(keyword: str, site: str, error: str = "", blocked: bool = False) -> dict:
+    """空结果信封，按统一出口标记契约分流：带 error（含反爬 blocked）的是
+    请求层面的失败，打 `_fetch_failed`；不带 error 的是这一轮跑成了、答案就是
+    0 条，打 `_zero_hit`。消费面（`_rows_and_error`、聚合层、`tax_cases`）
+    从此认这两枚键判失败，不再拿 `_error` 文本猜。"""
     out = _payload(keyword, site, [], "")
     if error:
+        # `_payload` 见空清单就打了 _zero_hit，这一支是失败，必须把它摘掉：
+        # 两枚键同时挂在一只信封上，判据无论先看哪枚都说明契约被写坏了。
+        # 2026-11-25 用例 test_sogou_breaker_is_a_failure 就是撞在这上面报红的。
+        out.pop("_zero_hit", None)
         out["_error"] = error
+        out["_fetch_failed"] = True
     if blocked:
         out["_blocked"] = True
     return out
@@ -451,10 +465,12 @@ def sogou_search(keyword: str, site: str = "", size: int = 10) -> dict:
 
     Returns:
         {"keyword","site","total","results","searched_at","source","_from_cache",
-         "_error"?,"_blocked"?}
+         "_error"?,"_fetch_failed"?,"_zero_hit"?,"_blocked"?}
         results 每项含 title/url/date/snippet/source/site。
-        被反爬、熔断或预算用尽时 `_error` 非空；被反爬时另带 `_blocked=True`。
-        0 条且页面给出无结果提示时不带 `_error`——这两种在调用方那里要分开处理。
+        被反爬、熔断或预算用尽时 `_error` 非空并带 `_fetch_failed=True`；被反爬时
+        另带 `_blocked=True`。0 条且页面给出无结果提示时不带 `_error` 而带
+        `_zero_hit=True`——这两种在调用方那里要分开处理，3.62.26 起统一出口标记
+        契约把它们钉成两枚键，判据见 `tax_http.is_fetch_failure`。
     """
     if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
         raise ValueError("size 必须是正整数")

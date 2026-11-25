@@ -482,3 +482,51 @@ def require_npc_ok(data: dict) -> None:
     reason = npc_business_error(data)
     if reason:
         raise RuntimeError(reason)
+
+
+# ── 统一出口标记契约（3.62.26）─────────────────────────────────────────────
+# 各源在交回清单信封时，必须把「这一轮没取到」与「这一轮取到了、答案是 0 条」
+# 写成两枚可判读的键，而不是只留一句人读的话：
+#   _zero_hit     True —— 合法零命中：站点明确说没有，或按词筛完确实没有。
+#                        这一档**可以带 _error**（那是扫描结论的说明文本，例如
+#                        法规库那句「翻完前 N 页未筛出法规库条目」），说明文本
+#                        不作判据，判据只看这一枚。
+#   _fetch_failed True —— 请求或解析层面没取到（超时、断连、非 200、不是 JSON、
+#                        改版、落在验证页、翻页取空、中途断供）。
+# 两枚都不带时按老形状读：带 _error 就是失败。这条兜底是有意留的——新写的源
+# 忘了打标记，退化方向必须是"多报一次取数失败"（看得见、会去补），不能是
+# "把接口挂了说成库里没有"（看不见、直接答错）。
+# 两枚键在同一只信封上必须互斥。万一有源写错成同时带两枚，判据取"失败"那一侧：
+# 退化方向只允许多报一次取数失败（看得见、会去补），不允许多报一次合法空档
+# （看不见，直接把接口挂了答成"库里没有"）。
+ZERO_HIT_KEY = "_zero_hit"
+FETCH_FAILED_KEY = "_fetch_failed"
+
+
+def is_fetch_failure(env: dict) -> bool:
+    """这一轮是不是"没取到数据"。合法零命中不是。"""
+    if not isinstance(env, dict):
+        return False
+    if env.get(FETCH_FAILED_KEY):
+        return True
+    if env.get(ZERO_HIT_KEY):
+        return False
+    return bool(env.get("_error"))
+
+
+def is_legal_empty(env: dict) -> bool:
+    """这一轮是不是"取到了、答案是 0 条"。"""
+    return bool(isinstance(env, dict) and env.get(ZERO_HIT_KEY))
+
+
+def empty_note(env: dict) -> str:
+    """合法零命中那一句成因（没有就说明白，回空串）。
+
+    取的是各源已有的说明键，按"越靠近真相越先看"排：维度拼窄 > 接口没给清单 >
+    零命中扫描结论。这一句只能出现在"为什么是 0 条"的位置，不能进 errors 那一串
+    ——那是把"没有"说成"失败"，正是本契约要收掉的那件事。
+    """
+    if not isinstance(env, dict):
+        return ""
+    return (env.get("_filter_note") or env.get("_empty_reason")
+            or env.get("_status") or env.get("_error") or "")

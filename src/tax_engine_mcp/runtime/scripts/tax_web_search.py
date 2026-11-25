@@ -387,6 +387,8 @@ def search_chinatax(keyword: str, page: int = 1, size: int = 10,
             out["_empty_reason"] = (
                 f"已翻过末页：命中 {total} 条只占 {last_page} 页，"
                 f"第 {page} 页本来就空，按已取回的清单下结论即可")
+            # 翻过末页是正常收尾：本轮的合法空档，契约里打 _zero_hit。
+            out["_zero_hit"] = True
         else:
             out["_empty_reason"] = (
                 f"接口报告命中 {total} 条，第 {page} 页却没给条目清单"
@@ -400,6 +402,9 @@ def search_chinatax(keyword: str, page: int = 1, size: int = 10,
             f"在检索词「{keyword}」上叠加了 {len(filters)} 个收窄维度后命中 0 条；"
             f"接口对「维度拼窄」与「该库没有」回的是同一个 0，分不清。放宽一维重取"
             f"才有结论（发出去的是 {filters}）")
+    elif not items and not out.get("_error"):
+        # 没拼维度、接口也没报命中、页面也没给条目：这一轮请求成功、答案是 0 条。
+        out["_zero_hit"] = True
     return out
 
 
@@ -457,7 +462,10 @@ def _empty_result(keyword: str, error: str = "", filters: dict = None,
         "_error": error,
         "_from_cache": False,
         # 只有请求真的失败才走这里，用它把"没取到数据"与"翻了没筛出/库里没有"
-        # 分开——两者都叫 0 条，但界面该说的不是一句话。见 tax_server 空态分流。
+        # 分开——两者都叫 0 条，但界面该说的不是一句话。空态分流在
+        # frontend/index.html（页码超总页 → _fetch_failed → _filter_note →
+        # _empty_reason → 其余 _error），不在 tax_server；统一判据见
+        # tax_http.is_fetch_failure。
         "_fetch_failed": True,
         # 每一次尝试的 (host, 异常类名或状态码, 耗时 ms, 第几次)，取自 tax_http
         "_attempts": list(attempts or []),

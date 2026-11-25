@@ -21,6 +21,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from tax_shui5 import search_shui5
+import tax_http as H
 from tax_sogou import sogou_search
 from tax_wechat import search_wechat
 
@@ -108,8 +109,8 @@ def search_practice_sources(query: str, n: int = 3) -> tuple[list, str]:
     for name, data in [("税屋", search_shui5(query, size=n)),
                        ("微信公众号", search_wechat(query, size=n))]:
         data = data or {}
-        if data.get("_error"):
-            notes.append(f"{name}：{data['_error']}")
+        if H.is_fetch_failure(data):
+            notes.append(f"{name}：{data.get('_error') or '取数失败'}")
         elif data.get("_partial_error"):
             # 逐枚失败只在顶层才有机会说话：下面那道 `if not href` 会把微信没还原出
             # 地址的条目整条丢掉（不计数），税屋的空正文条目则带着空 snippet 原样交出。
@@ -141,8 +142,8 @@ def search_web_broad(query: str, n: int = 8) -> tuple[list, str]:
     dict，随后 list(dict) 拿到键名。
     """
     found = sogou_search(f"{query} 税收 政策解读", site="", size=n)
-    if found.get("_error"):
-        return [], found["_error"]
+    if H.is_fetch_failure(found):
+        return [], (found.get("_error") or "取数失败")
 
     results = []
     for item in found["results"]:

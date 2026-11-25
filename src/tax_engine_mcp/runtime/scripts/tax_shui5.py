@@ -573,7 +573,9 @@ def search_native(keyword: str, size: int = 5, session: requests.Session | None 
     if classid and not str(classid).isdigit():
         cid = classid_spec(classid)
         if not cid:
-            return {"results": [], "total": None,
+            # 3.62.26 契约：参数在发出前就被拦掉也是"这一轮没取到"，必须带键，
+            # 否则消费面只能退回去认 _status 的"没走成"三个字——那是文本判据。
+            return {"results": [], "total": None, "_fetch_failed": True,
                     "_status": f"没走成：栏目表 data/shui5_columns.json 里没有「{classid}」，"
                                f"或其中某一段查不到"}
         classid = cid
@@ -589,7 +591,7 @@ def search_native(keyword: str, size: int = 5, session: requests.Session | None 
                          verify=False, allow_redirects=True)
         page = r.content.decode("utf-8", errors="replace")
         if _is_waf_page(page):
-            return {"results": [], "total": None,
+            return {"results": [], "total": None, "_fetch_failed": True,
                     "_status": "没走成：WAF 挑战未通过（会话凭据失效）"}
         if RATE_LIMIT_MARK in page:
             time.sleep(gap)
@@ -597,10 +599,13 @@ def search_native(keyword: str, size: int = 5, session: requests.Session | None 
                              verify=False, allow_redirects=True)
             page = r.content.decode("utf-8", errors="replace")
             if RATE_LIMIT_MARK in page:
-                return {"results": [], "total": None,
+                return {"results": [], "total": None, "_fetch_failed": True,
                         "_status": "没走成：站点提示两次检索须间隔 2 秒以上，重发一次仍被限"}
         if NO_RESULT_MARK in page:
-            out = {"results": [], "total": 0,
+            # 站点明说"没有搜索到相关的内容"：这是一轮成功的检索、答案是 0 条，
+            # 所以打 _zero_hit。_status 那句"两种成因分不开"说的是参数档位，
+            # 不是请求失败——不打这一枚，消费面会把 0 条读成取数失败。
+            out = {"results": [], "total": 0, "_zero_hit": True,
                    "_status": "0 条：站点回「没有搜索到相关的内容」，这一页两种成因分不开"
                               "（站内确实没有 / 这一档参数站点不接受）"}
             if note:
@@ -609,7 +614,7 @@ def search_native(keyword: str, size: int = 5, session: requests.Session | None 
 
         m = _SEARCHID_RE.search(r.url)
         if not m:
-            return {"results": [], "total": None,
+            return {"results": [], "total": None, "_fetch_failed": True,
                     "_status": "没走成：检索落点里没有 searchid"}
         sid = m.group(1)
         total = None
@@ -673,7 +678,11 @@ def search_native(keyword: str, size: int = 5, session: requests.Session | None 
             out["_filter_note"] = note
         return out
     except requests.RequestException as e:
-        return {"results": [], "total": None, "_status": f"没走成：请求失败：{e}"}
+        # 3.62.26：这一支原来只有 _status，聚合层与 _rows_and_error 都看不见——
+        # 请求真的失败了，却回成"0 条且没有任何说明"，正是红线⑦那种静默。
+        # 契约要求失败必须带 _fetch_failed，说明文本留在 _status 里照旧可读。
+        return {"results": [], "total": None, "_fetch_failed": True,
+                "_status": f"没走成：请求失败：{e}"}
     finally:
         if own:
             session.close()
@@ -770,12 +779,17 @@ def search_shui5(keyword: str, size: int = 5, read_body: bool = False,
         nat_error = nat.get("_error", "")
 
     err = ""
+    failed_channel = False
     if nat_error:
+        # 断供：已经取回的条目是真的，但这一轮不完整。它仍走 _error 老通道
+        # （tests/test_source_defects.py:520 钉着"断供那档仍要走老通道"），
+        # 不打 _zero_hit——0 条不是它的答案，半截才是。
         err = nat_error
     elif not results:
         failed = {k: v for k, v in channels.items() if v.startswith("没走成") or v.startswith("被拦")}
         if failed:
             err = "两条检索通道都没取到：" + "；".join(f"{k} {v}" for k, v in failed.items())
+            failed_channel = True
 
     how = ""
     partial = ""
@@ -798,6 +812,13 @@ def search_shui5(keyword: str, size: int = 5, read_body: bool = False,
     }
     if err:
         out["_error"] = err
+        if failed_channel:
+            # 两路都是"没走成/被拦"：这是请求层面的失败，不是站内 0 条。
+            out["_fetch_failed"] = True
+    elif not results:
+        # 两路都跑成了、答案就是 0 条（含站内那一路的 NO_RESULT_MARK 支）。
+        # 不打这一枚，包装层把站内的 _zero_hit 吃掉，消费面只看 _error 就没了依据。
+        out["_zero_hit"] = True
     if partial:
         out["_partial_error"] = partial
     if note:
@@ -963,8 +984,16 @@ def search_many(keywords: list, size: int = 5, read_body: bool = True,
         out["_filter_note"] = "；".join(notes)
     if not rows:
         errs = [f"「{p['keyword']}」{p['error']}" for p in per if p["error"]]
-        out["_error"] = ("；".join(errs) if errs
-                         else f"{len(words)} 枚词都没取到条目")
+        if errs:
+            # 至少一枚词是"没走成/被拦/断供"：这是取数失败，不是站内 0 条。
+            out["_error"] = "；".join(errs)
+            out["_fetch_failed"] = True
+        else:
+            # 每一枚词都跑成了、答案全是 0 条。原来这一支只写 _error，
+            # 消费面（_rows_and_error、聚合层）一律读成"取数失败"，
+            # 于是多词批量检索永远带一条假故障。3.62.26 起打 _zero_hit。
+            out["_error"] = f"{len(words)} 枚词都没取到条目"
+            out["_zero_hit"] = True
     return out
 
 

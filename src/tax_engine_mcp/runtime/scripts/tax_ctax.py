@@ -429,8 +429,10 @@ def search_ctax(keyword: str, size: int = 5, *, node=None, date_from: str = "",
         j, err = _search_once(params, session=session)
         if j is None:
             if page == 1:
+                # 首页就没取到：这是请求层面的失败，契约要求带 _fetch_failed，
+                # 光靠 _error 文本让消费面去猜"没走成"三个字是不成立的判据。
                 return {"results": [], "total": None, "_status": f"没走成：{err}",
-                        "_error": err}
+                        "_error": err, "_fetch_failed": True}
             status = f"第 {page} 页取不到（{err}），停在已取的 {len(got)} 条"
             break
         rows = j.get("article") or []
@@ -488,7 +490,13 @@ def search_ctax(keyword: str, size: int = 5, *, node=None, date_from: str = "",
         # 聚合层（tax_aggregator.py:381）只认 _error 才把"这一源少了一段"
         # 记进 errors；不给 _error，中途断供就只留在 _status 里，而
         # source_summary 会把这一源报成"0 条/几条"——把没取到说成没有。
+        # 断供是取数层面的失败，不是合法空档，所以不打 _zero_hit。
         out["_error"] = status
+    elif not uniq:
+        # 请求跑成了、限定也没拼窄、站内就是 0 条：契约里的合法空档。
+        # 这一档原来什么都不带（tests/test_source_defects.py:3987 钉着不许有
+        # _error），补 _zero_hit 之后消费面才有键可判，不必猜那句 _status。
+        out["_zero_hit"] = True
     if notes:
         out["_filter_note"] = "；".join(notes)
     return out
