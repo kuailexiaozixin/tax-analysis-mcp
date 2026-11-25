@@ -1,6 +1,6 @@
 {
   "engine": "tax-analysis",
-  "engine_version": "3.62.26",
+  "engine_version": "3.62.27",
   "files": {
     "data/contract_intake_template.json": "771e60f68a16cabb4515ffc691207c76e8f206a93ee64e1e1a20f2d98f158edf",
     "data/control_activities.json": "a7fe3bb0fa649581c7661107143870c1250a6b381e6964ee70aa1a37370ff839",
@@ -13,7 +13,7 @@
     "references/tax_risk_framework.md": "7ddd0305359c391930474b510196781fef862fcb4570219d57cfdbb2b7c24da1",
     "scripts/tax_aggregator.py": "e3de5050f86e2daa086a81752e2bcfbf03314260a7c1290ba217f6c642559883",
     "scripts/tax_analyze.py": "636b3eef62ccd7515f8234959f7fd9924781e5f8daee9c0ffd65d4f935aef093",
-    "scripts/tax_answer.py": "f824a17eab2a0f077bbbc80d5a9ff30f1757b54e963e382070175f2d084f5b33",
+    "scripts/tax_answer.py": "19048a3219f9c330d80352b5dd82c4e92695a891fa64e5b17d5bc8646457bc4c",
     "scripts/tax_browser.py": "2b2a77ea2bdb90149b1e12a0e5c9c5df527fca537bf772350b6611a4c9946200",
     "scripts/tax_cache.py": "92bf884e34c9b133f5bbdd03bbea7b88390b8b27737e5f1ff2e03fba45d30ec4",
     "scripts/tax_calc.py": "3ff148d2c2c5a7340e0c9ad78f26ddfa5f0bb6b22bb80d6981eed80ae963f76a",

@@ -507,15 +507,25 @@ def locate_cited_document(title: str, size: int = 6) -> tuple[list, list, str]:
             attempts.append({"keyword": cand, "outcome": "exception",
                              "reason": type(e).__name__})
             continue
-        if r.get("_fetch_failed") or r.get("_error"):
+        if H.is_fetch_failure(r):
             # 检索入口失败时不抛异常，而是交回 _error/_fetch_failed（tax_fgk 全文
             # 没有 raise）。失败那一档仍可能带条目（3.62.12 的断供就带着已收到的
             # 那几条），所以记档之后照常合并，绝不因为"这一枚失败了"把已有的行丢掉。
+            # 3.62.27：判据换 tax_http.is_fetch_failure。老写法读 `_error` 非空即
+            # 失败，而 3.62.26 起 fgk 的合法零命中也带一句 `_error`（"翻完前 N 页
+            # 未筛出法规库条目"，那是扫描结论），于是通道明明跑成了、答案是 0 条，
+            # 这一支却记成 failed → state 走 channel-failed → compose 写出"检索
+            # 通道没取成…不是库里没有这一份：按 ⑦ 不能把没连上写成没有"。这是红线
+            # ⑦ 的反向假陈述：把"没有"写成"没连上"，读者会去重跑那一轮，而重跑一百
+            # 次还是 0 条。2026-11-25 探针 probe27b.py 实测到这一枚分歧。
             attempts.append({"keyword": cand, "outcome": "failed",
                              "reason": r.get("_error") or "取数失败"})
         elif not r.get("results"):
+            # 成因句改读 H.empty_note：老写法只取 `_empty_reason`，而 fgk 那句
+            # "翻完前 N 页…未筛出法规库条目"写在 `_error` 上，于是 no-hit 的
+            # state 只剩"关键词：未注明"，读者看不到为什么是 0 条。
             attempts.append({"keyword": cand, "outcome": "empty",
-                             "reason": r.get("_empty_reason") or ""})
+                             "reason": H.empty_note(r) or ""})
         else:
             attempts.append({"keyword": cand, "outcome": "rows", "reason": ""})
         for row in r.get("results", []):
@@ -701,6 +711,13 @@ def _doc_number_in_library(term: str, want: str = "", lookup=None) -> tuple:
         r = fn(term)
     except Exception as e:
         return None, str(e).splitlines()[0][:110], None
+    # 3.62.27 复核：这一支**有意不换成** tax_http.is_fetch_failure。契约的兜底是
+    # "没打键就认 _error 非空即失败"，而本层的桩与老钉（tests/test_source_defects.py
+    # :1970-1988）要的正是"零命中带一句 _error 说明 ⇒ not_in_library，只有
+    # _fetch_failed ⇒ lookup_failed"：换成契约判据，每一篇援引生僻文号的文章都会变成
+    # "连不上库、补一轮"。这里的 `_empty_reason` 说的是"清单没给全"，那一轮确实不能
+    # 用来判存在性，所以它算失败。两条判据不同是分层不同：检索层判"这一轮要不要计入
+    # 底稿"，本层判"能不能据此说库里没有这份文件"。改它之前先读那两枚钉。
     if r.get("_fetch_failed") or r.get("_empty_reason"):
         return None, r.get("_error") or "取数失败", None
     rows = r.get("results") or []
