@@ -581,7 +581,24 @@ def fetch_associations(article_id: str) -> dict:
     block = next((g for g in results
                   if isinstance(g, dict) and "policyDocument" in g), None)
     if block is None:
-        out["_error"] = "响应里没有关联分组（接口结构变了或该文件无关联）"
+        # 这一支的成因旧句写成「接口结构变了或该文件无关联」，把一种根本走不到
+        # 这里的形态列了进来。2026-11-26 三把探针分开量过（`.tmp-inspect\
+        # probe34c-run.txt`、`probe34d-run.txt`、`probe34e-run.txt`）：同一份文件，
+        # 发详情页 meta 里的数字 articleId `5194010` 回两段、policyDocument 7 条；
+        # 发带 c 前缀的 `c5194010`、不存在的 `9999999`、尾巴多一个字母的
+        # `5194010x`，三档全是同一份 56 字节空壳
+        # `{"code":200,"results":{"data":{"total":0,"results":[]}}}`——零段就是
+        # 接口「没认这个 id」的说法。而「这份文件真没有关联」**到不了这一支**：
+        # 鉴定案例 `5248633` 无关联，接口照样回 41879 字节的完整结构，
+        # policyDocument 键在、四组都是空数组，生产的读数是四组全 0 且不带 _error。
+        # 所以这里只按段数分两种真实成因，不再猜「无关联」。
+        if not results:
+            out["_error"] = ("关联接口回的是零段空壳：这个 id 没被接口认下"
+                             "（实测带 c 前缀、不存在的号、非法写法都回这段；"
+                             "入参要详情页 meta 里不带 c 的纯数字 articleId）")
+        else:
+            out["_error"] = (f"关联接口的结构变了：响应有 {len(results)} 段，"
+                             "却没有一段带 policyDocument 这个关联分组")
         return out
     for key, field in _ASSOC_GROUPS.items():
         out[field] = [_assoc_row(it) for it in (block.get(key) or [])
