@@ -99,6 +99,19 @@ EFFECT_LEVEL_VALUES = ("法律", "行政法规", "国务院文件", "税务部�
 # 接口回的是 total=0，与「这一维确实筛空了」「库里没有」在响应里同一个形态。
 AGING_UNRECORDED_LEVELS = ("财税文件", "其他文件", "工作通知")
 
+# 行业维（industrytypename）。值域十一档＝站方结果页侧栏「行业分类」控件现读的名字
+# （2026-11-27 结果页 46,078B，class=hyfl 的锚逐枚抄下），与响应分面
+# industrytypenameList 的 12 档同名同序不齐——分面里多出的那一档叫 "null"（字符串），
+# 指「没录行业」的条目；请求侧发字符串 "null" 实测也收窄（增值税×FILE_LABELS 基线
+# 1910 ⇒ 66，2026-11-27 一发）。白名单这里只收十一个真行业名，"null" 档不收：
+# 要「没录行业」的条目就别发这一维，取回后读条目字段自己认——把字符串 "null"
+# 混进白名单会让 "--industry null" 看着像一条筛选命令，实际上是与录入侧纠缠的
+# 特殊档，先不接。逐档单发读数（同基数）：工业 77（全站基数同 77）、农林业 49、
+# 社会民生 70、null 档 66；越界值回 total=0（两枚检索词「增值税」「留抵退税」
+# 各一发同形）——与 aging/effect_level 的域外形态一样，所以同样在发之前拦。
+INDUSTRY_VALUES = ("工业", "涉外", "社会民生", "金融业", "农林业", "房地产业",
+                   "科技创新", "服务业", "创业就业", "区域发展", "绿色发展")
+
 # orderBy 的取值与实测语义。日期倒序是 1，不是别处文档写的 2：发 1 时三个检索词的
 # 成文日期序列都单调递减（增值税自 2026-09-04 起、小微企业、研发费用同）；发 2 时
 # 首屏日期在 2026-01-30 与 2026-02-10 之间来回跳，且同一类别先聚到一起，它排的是类别。
@@ -163,7 +176,8 @@ def keyword_note(keyword: str, results: list, total: int) -> str:
 def build_filters(in_title: bool = False, precise: bool = False,
                   tax_type: str = "", doc_type: str = "", doc_year: str = "",
                   doc_no: str = "", cwrq_from: str = "", cwrq_to: str = "",
-                  aging: str = "", effect_level: str = "") -> dict:
+                  aging: str = "", effect_level: str = "",
+                  industry: str = "") -> dict:
     """把可选的收窄维度拼成 search5 的过滤参数 dict。
 
     只发填了的维度，返回的 dict 直接喂给 search_chinatax(filters=…)。各项取值
@@ -171,7 +185,8 @@ def build_filters(in_title: bool = False, precise: bool = False,
     读数在 search_source/chinatax/NOTE.md。不要凭记忆改。哪些维度真的会被发出去
     分两种：范围／匹配／日期／时效
     （aging）由网页界面那四个控件驱动（tax_server._ui_filters），效力等级与文种、
-    税种那几组目前只有命令行用得到（--effect-level / --doc-type / --tax-type）。
+    税种、行业那几组目前只有命令行用得到（--effect-level / --doc-type / --tax-type /
+    --industry）。
 
     Args:
         in_title: 仅标题匹配（wordPlace=1，默认 0 是全文）
@@ -183,13 +198,15 @@ def build_filters(in_title: bool = False, precise: bool = False,
         cwrq_from / cwrq_to: 成文日期区间，YYYY-MM-DD（cwrqStart/cwrqEnd）
         aging: 时效，取值限 AGING_VALUES 五项（xxgkAging）
         effect_level: 效力等级，取值限 EFFECT_LEVEL_VALUES 八项（xxgkEffectLevel）
+        industry: 行业分类，取值限 INDUSTRY_VALUES 十一项（industrytypename）；
+            「没录行业」那一档不发，理由见 INDUSTRY_VALUES 那段注释
 
     doc_type 会去掉内部空白：接口对带空格的写法是宽松误命中（实测「财政部 税务总局
     公告」配 docYear 归 0，去空格「财政部税务总局公告」才收窄到本尊），页面上印的
     是带空格的，用户很可能直接抄过来，所以这里替他去空格。
 
     Raises:
-        ValueError: 日期/年份/编号格式不合法；时效或效力等级不在实测过的取值域里；
+        ValueError: 日期/年份/编号格式不合法；时效、效力等级或行业不在实测过的取值域里；
             或时效与 AGING_UNRECORDED_LEVELS 那三档效力等级同发——那三族条目名下
             不录时效，一起发必回 0 条，而这与"库里没有"长得一模一样。
     """
@@ -222,6 +239,20 @@ def build_filters(in_title: bool = False, precise: bool = False,
             raise ValueError(f"effect_level 只认 {EFFECT_LEVEL_VALUES}，收到 "
                              f"{effect_level!r}")
         out["xxgkEffectLevel"] = e
+    if industry:
+        n = industry.strip()
+        # 与 aging/effect_level 同一套判据：域外值接口回 total=0，与「这一维筛空了」
+        # 「库里真没有」在响应里同一个形态（2026-11-27 两枚检索词各一发同形），
+        # 所以发之前拦；填了内容却 strip 成空也不算「根本没填」。
+        if not n:
+            raise ValueError(f"industry 只有空白字符（{industry!r}）——"
+                             "要发这一维就给 %s 之一，不要就整个不填"
+                             % "、".join(INDUSTRY_VALUES))
+        if n not in INDUSTRY_VALUES:
+            raise ValueError(f"industry 只认 {INDUSTRY_VALUES}，收到 {industry!r}——"
+                             "域外的值发出去接口回 total=0，与这一维真的筛空了分不开"
+                             "（「没录行业」那一档本层不发，见 INDUSTRY_VALUES 那段注释）")
+        out["industrytypename"] = n
     # 两维同发的程序拦截：判据与逐档读数见上面 AGING_UNRECORDED_LEVELS 那段。
     # 只拦这三档，另外五档同发是正常交集（实测法律 9→8、税务规范性文件 681→216），
     # 一并拦掉就是把能用的组合也堵死。
@@ -740,6 +771,10 @@ def add_filter_args(parser):
                         "%s 这三档名下不录时效，会被直接拦下"
                         % ("、".join(EFFECT_LEVEL_VALUES),
                            "、".join(AGING_UNRECORDED_LEVELS)))
+    g.add_argument("--industry", default="", metavar="行业",
+                   help="行业分类，只认 %s（industrytypename）；「没录行业」那一档"
+                        "本层不发，取回后读条目自己认"
+                        % "、".join(INDUSTRY_VALUES))
     g.add_argument("--order", default="relevance", metavar="序",
                    choices=sorted(ORDER_VALUES),
                    help="排序：relevance（默认）/ date_desc（成文日期最新在前）/ "
@@ -759,7 +794,8 @@ def filters_from_args(args) -> dict:
         doc_year=args.doc_year, doc_no=args.doc_no,
         cwrq_from=args.cwrq_from, cwrq_to=args.cwrq_to,
         aging=getattr(args, "aging", ""),
-        effect_level=getattr(args, "effect_level", ""))
+        effect_level=getattr(args, "effect_level", ""),
+        industry=getattr(args, "industry", ""))
 
 
 def search_opts_from_args(args) -> dict:
