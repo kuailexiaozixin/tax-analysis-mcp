@@ -811,6 +811,11 @@ def search_tax(keyword: str, *,
     tax_http.require_npc_ok(data)
 
     total = outer.get("total", 0)
+    # 加宽轮（下面标题模糊那一段）换的是候选池所在的那一档；这三枚给它做默认值，
+    # 没走加宽时保持 None，result 构造处就不写那两个键。
+    main_total = None
+    widened_total = None
+    merged = 0
     rows = outer.get("rows", outer.get("list", []))
 
     # Clean HTML tags from names (uses module-level _CLEAN_HTML_RE)
@@ -876,11 +881,14 @@ def search_tax(keyword: str, *,
             extra_outer = extra_outer.get("data", extra_outer)
             extra_rows = extra_outer.get("rows", extra_outer.get("list", []))
             have = {r.get("bbbs", "") for r in rows}
+            main_total = total
+            widened_total = extra_outer.get("total")
             for item in extra_rows:
                 bbbs = item.get("bbbs", "")
                 if bbbs in have:
                     continue
                 have.add(bbbs)
+                merged += 1
                 results.append({
                     "id": bbbs,
                     "title": clean_html(item.get("flfgname", item.get("title", ""))),
@@ -898,6 +906,15 @@ def search_tax(keyword: str, *,
         else:
             results.sort(key=lambda it: _title_match_rank(it["title"], keyword, parent_law))
         del results[size:]
+        # 2026-11-26 实测：接口这一枚 total 随 pageSize 换值，而且换的不只是数字，
+        # 是整个结果集（「环境保护」×现行有效：pageSize=1—5 报 3108、首屏全是「法律」；
+        # 6/10/20/30/40/50/100 报 219、首屏混入行政法规与地方法规；两档首屏交集 1/5）。
+        # 加宽轮把候选池换到了 fetch_size 那一档，total 却还留着主发那一档的数——
+        # 于是 size=5 那次报 3108、给的五条却全在 20 那一档的前 20 行里（交集 5/5）。
+        # 报出去的数该属于这批候选：并入过新条目且两档不同值时按加宽档报，
+        # 主发那一档的数不丢，留在 source_total，两档各报什么写进 _total_note。
+        if merged and widened_total is not None and widened_total != main_total:
+            total = widened_total
 
     if sort == "date":
         # 标题模糊路径已在截断前排过（必须先排才不会被 size 截掉新文件），
@@ -941,6 +958,15 @@ def search_tax(keyword: str, *,
     if search_type == 2 and scope == "fulltext":
         result["_reliability"] = "medium"
         result["_reliability_note"] = RELIABILITY_NOTES["medium"]
+
+    if main_total is not None and widened_total is not None \
+            and widened_total != main_total and total == widened_total:
+        result["source_total"] = main_total
+        result["_total_note"] = (
+            "接口这一枚 total 随 pageSize 换值，换的不只是数字而是整个结果集："
+            "主发那一档（pageSize=%d）报 %s，本批候选取自加宽那一档（取回时 pageSize 更大）"
+            "报 %s，所以 total 按候选所在那一档报，主发的数留在 source_total。"
+            % (size, main_total, widened_total))
 
     if date_dropped:
         result["source_total"] = date_widened_total
