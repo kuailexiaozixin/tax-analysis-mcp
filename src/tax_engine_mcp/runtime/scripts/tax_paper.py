@@ -91,6 +91,15 @@ _READ_INTERVAL = 1.0
 _DATE_RE = re.compile(r"(\d{4})-(\d{1,2})-(\d{1,2})")
 _EDITION_NAME_RE = re.compile(r"第\s*0?\d+\s*版[：:]\s*([^<\s|]{2,14})")
 _ARTICLE_HREF_RE = re.compile(r"""href=["']([^"'#]*content_\d+\.html)["']""", re.I)
+# 版面页的整版 PDF：址挂在 <a class="pdf-btn" onclick="downloadPDF(this)"
+# data-url="../../../att/202611/25/<uuid4>.pdf"> 上（2026-11-26 量到：每版恰一枚，
+# 三天 × 八版 24/24 全中；址名是 uuid4，拼不出来，只能现读）。同一行还跟着
+# <span class="download-warning">您没有下载权限</span>——那句与 hasAuthorize 都是
+# 前端 JS 判的（走 GET <xyUrl>/amuc/api/read/ifAccess 读 SSO cookie），HTTP 本身不拦：
+# 干净会话（0 枚 cookie）直取该址回 200 / application/pdf / 头 %PDF-1.4。
+# 本层只交回链接、不下载：一版实测 844,149～5,236,296 字节，且技能里没有 PDF 文本层
+# 解析器可用（references/source_defects.md 记过本机只有 pdfplumber 解得动）。
+_PDF_DATA_URL_RE = re.compile(r"""data-url=["']([^"'#]*\.pdf)["']""", re.I)
 _ENP_BLOCK_RE = re.compile(r"enpproperty(.*?)/enpproperty", re.S)
 _ENP_TITLE_RE = re.compile(r"<title>(.*?)</title>", re.S)
 _H3_RE = re.compile(r"<h3[^>]*>(.*?)</h3>", re.S)
@@ -138,6 +147,17 @@ def _edition_name(node_html: str) -> str:
 def _article_links(node_html: str, base_url: str) -> list:
     """版面页里的文章地址（绝对化 + 去重 + 按地址排序，保持页面顺序的可比性）。"""
     return sorted({urljoin(base_url, m.group(1)) for m in _ARTICLE_HREF_RE.finditer(node_html or "")})
+
+
+def _edition_pdf(node_html: str, base_url: str) -> str:
+    """版面页那一枚整版 PDF 的址（绝对化）；页面没挂就交回空串——不拼、不猜。
+
+    只取 data-url 这一处：实测版面页里 href 含 .pdf 0 枚、src 含 .pdf 0 枚，
+    剩下两处 .pdf 字样是 CSS 类名与 JS 里的 $('.pdf-btn')（3.62.41 之前这份 NOTE
+    写的是「版面页与文章页都没有任何 .pdf 链接」，那是只查了 href/src 的以偏概全）。
+    """
+    m = _PDF_DATA_URL_RE.search(node_html or "")
+    return urljoin(base_url, m.group(1)) if m else ""
 
 
 def _title_of(article_html: str) -> str:
@@ -229,7 +249,12 @@ def _http_get(url: str, session=None, timeout: int = TIMEOUT_PAGE):
 
 def fetch_edition(date_str: str, edition: int = 6, *, use_cache: bool = True,
                   session=None) -> dict:
-    """一天一枚版面：{date, edition, edition_name, url, articles, _status}。
+    """一天一枚版面：{date, edition, edition_name, url, pdf_url, articles, _status}。
+
+    `pdf_url` 是那一版的整版 PDF（现读页面 data-url——址名是 uuid4，拼不出来）；
+    页面没挂就交回空串。它只是个链接：按钮上那句「您没有下载权限」是前端 JS 判的，
+    HTTP 本身不拦（2026-11-26 干净会话实测 200 / application/pdf / 头 %PDF-1.4），
+    但下载不在本层做——一版实测 0.8～5.2MB，且本机没有 PDF 文本层解析器可用。
 
     `_status` 四档，四件事不许混成一件事：
       ""                     整版取全
@@ -242,7 +267,7 @@ def fetch_edition(date_str: str, edition: int = 6, *, use_cache: bool = True,
     iso = "%s-%s-%s" % (ym[:4], ym[4:6], dd) if ym else str(date_str)
     if not ym:
         return {"date": iso, "edition": edition, "edition_name": "", "url": "",
-                "articles": [], "network": 0,
+                "pdf_url": "", "articles": [], "network": 0,
                 "_status": "failed｜日期形状不认（只收 2026-11-24 / 20261124 两式）"}
 
     # 键必须过 _key() 做哈希：那是 sha256 前 16 位，落盘名合法。直接把
@@ -263,7 +288,7 @@ def fetch_edition(date_str: str, edition: int = 6, *, use_cache: bool = True,
     st, furl, html, err = _http_get(lay, session=session)
     net = 1
     out = {"date": iso, "edition": edition, "edition_name": "", "url": lay,
-           "articles": [], "network": net}
+           "pdf_url": "", "articles": [], "network": net}
     if st == 404:
         out["_status"] = "no-issue：%s 当天没出报（版面页 404）" % iso
         if PAPER_CACHE.enabled:
@@ -277,6 +302,8 @@ def fetch_edition(date_str: str, edition: int = 6, *, use_cache: bool = True,
 
     name = _edition_name(html)
     out["edition_name"] = name
+    # 版面页已在手，多解一次不额外打站（2026-11-26 读数：三天 × 八版 24/24 每版一枚）
+    out["pdf_url"] = _edition_pdf(html, furl or lay)
     links = _article_links(html, furl or lay)
     articles, lost = [], []
     for u in links:
@@ -421,6 +448,12 @@ def render(out: dict) -> str:
         if out.get("_from_cache"):
             hit += "，这一趟是六小时内的缓存"
         L.append("取到 %d 篇（%s）：" % (len(arts), hit))
+        if out.get("pdf_url"):
+            L.append("  整版 PDF：%s" % out["pdf_url"])
+            L.append("     （只给链接，本层不下载；页面上那句「您没有下载权限」是前端"
+                     "按钮的 JS 判断，址本身匿名可取）")
+        else:
+            L.append("  整版 PDF：这页没挂（版面页里读不到 data-url，不猜址）")
         for i, a in enumerate(arts, 1):
             tag = "［图片稿，正文是图注］" if a.get("_image_piece") else ""
             L.append("  %d. %s%s" % (i, a.get("title", ""), tag))
