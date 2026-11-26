@@ -489,7 +489,13 @@ def require_npc_ok(data: dict) -> None:
 
 
 def court_business_error(data: dict) -> Optional[str]:
-    """判一个 HTTP 200 的法院站信封是不是业务失败。是，就回一句带原因的话；不是，回 None。
+    """判一份法院站信封是不是业务失败。是，就回一句带原因的话；不是，回 None。
+
+    3.62.42 起这句话**不再断言状态码**：本函数收不到 status，而 2026-11-26 复量时
+    实测到案例库 `/cpws_al_api/api/user/recordSearchLog` 回的是**真 401**——旧句子
+    「法院站回 HTTP 200 但业务失败」喂给它就成了一句自己站不住的断言（把 401 说成
+    200）。这一族绝大多数失败确实是 200 装的（文书网 code=9、案例库四枚 code=401），
+    但判据本来就不看状态码，句子也不该替状态码作保。
 
     与 npc_business_error 同一族病症、不同的成功值，**不能合并**。实测（2026-11-25）：
       人民法院案例库 POST /cpws_al_api/api/cpwsAl/search 匿名四发，
@@ -514,7 +520,7 @@ def court_business_error(data: dict) -> Optional[str]:
     if not isinstance(data, dict):
         return None
     if data.get("success") is False:
-        return (f"法院站回 HTTP 200 但业务失败（success=false，"
+        return (f"法院站这封响应是业务失败（success=false，"
                 f"code={data.get('code')}）：这不是「没有命中」——"
                 f"裁判文书网的检索参数要前端 DES3 现算（strToBinary.js 里的 cipher()），"
                 f"缺这枚参数接口只会回这条，不会回空清单；别把它当 0 条往下答。")
@@ -527,10 +533,10 @@ def court_business_error(data: dict) -> Optional[str]:
         norm = code
     if norm == 0:
         return None
-    return (f"法院站回 HTTP 200 但业务失败（code={code}，"
+    return (f"法院站这封响应是业务失败（code={code}，"
             f"msg={str(data.get('msg') or data.get('description'))[:80]!r}）："
             f"这一族的墙在接口层、不在页面层——"
-            f"人民法院案例库匿名一律 code=401「未登录」，"
+            f"人民法院案例库匿名一律 code=401「未登录」（只有 recordSearchLog 用真 401），"
             f"裁判文书网要前端加密参数、缺了回 code=9。"
             f"这不是「库里没有」，是把没连上写成了没有。")
 
