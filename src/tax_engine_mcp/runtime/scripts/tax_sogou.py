@@ -73,6 +73,15 @@ _CITE_RE = re.compile(
 _TAG_RE = re.compile(r"<[^>]+>")
 _DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 _CONT_PAGE_RE = re.compile(r"\$\d+(?=\.html(?:$|[?#]))")
+# 2026-11-26 量到的手机入口新形状：结果卡片整体搬进
+# `<script type="application/json">…</script>` 数据岛，HTML 侧只剩壳（`a.resultLink`
+# 只剩百科卡一枚，`data-url` 0 处）。这一枚正则只认带 type="application/json" 的容器，
+# 不认裸 <script>：脚本正文里出现过一段 url/title 字样不算结果（判据
+# test_a_json_payload_outside_an_island_tag_is_not_a_result）。
+# 注意别拿 script 的 id 当锚——那是 `data-<会话 uuid>`，每轮都换。
+_ISLAND_JSON_RE = re.compile(
+    r'<script[^>]*\btype=["\']application/json["\'][^>]*>(.*?)</script>',
+    re.S | re.I)
 _REDIRECT_CODES = (301, 302, 303, 307, 308)
 
 
@@ -348,6 +357,52 @@ class _MobileResultsParser(HTMLParser):
                 self.card[field].append(text)
 
 
+def _island_rows(html: str, site: str) -> tuple[list, int]:
+    """从 JSON 数据岛里读结果卡片，返回 (结果, 带直链的原始卡片数)。
+
+    2026-11-26 真页（`tests/fixtures/msogou_dataisland_20261126.html`）里九块岛中
+    六块是结果卡片，形状是顶层带 `url`+`title` 的对象（另有 `content` 摘要与
+    `showSiteAndDate`）；剩下三块分别是全局配置、只有标题的新闻聚合、带翻页 URL
+    的导航块——它们没有顶层 `url`+`title`，所以只认这一对键就自动筛掉了。
+    日期一律留空：岛上的 `showSiteAndDate.time` 语义说不清（本轮同一页里两枚卡片
+    标的是抓取当天 2026-11-26，另外几枚标的是站点收录/更新时间），拿它当发布日印进
+    答案就是把猜测写成事实。
+    """
+    rows = []
+    seen = set()
+    raw = 0
+    for body in _ISLAND_JSON_RE.findall(html):
+        try:
+            payload = json.loads(body)
+        except (ValueError, RecursionError):
+            # 畸形 JSON 不许把「页面改版」升级成崩溃。
+            continue
+        if not isinstance(payload, dict):
+            continue
+        url = (payload.get("url") or "").strip()
+        title = _clean(payload.get("title") or "")
+        if not url or not title:
+            continue
+        if not _domain_of(url) or _matches_site(url, "sogou.com"):
+            continue
+        raw += 1
+        url = _normalize_url(url)
+        if url in seen:
+            continue
+        seen.add(url)
+        if site and not _matches_site(url, site):
+            continue
+        rows.append({
+            "title": title,
+            "url": url,
+            "date": "",
+            "snippet": _clean(payload.get("content") or ""),
+            "source": _domain_of(url),
+            "site": site,
+        })
+    return rows, raw
+
+
 def _parse_mobile(html: str, site: str, size: int) -> tuple[list, int, bool]:
     parser = _MobileResultsParser()
     parser.feed(html)
@@ -384,6 +439,15 @@ def _parse(html: str, site: str = "", size: int = 10) -> tuple[list, int, bool]:
     if "vrResult" in html:
         rows, raw, has_mobile = _parse_mobile(html, site, size)
         if has_mobile:
+            if raw:
+                return rows, raw, has_mobile
+            # 2026-11-26 起结果卡片整体搬进 JSON 数据岛，HTML 侧只剩壳：这一支
+            # 先按 HTML 读到 0 枚直链，再回落到岛层。岛层也读不出才让上层报
+            # 「页面结构可能改版」——「有结果区但一条直链都取不出」这个语义
+            # 仍然留着，不能因为加了岛层就退化成静默 0 条。
+            island_rows, island_raw = _island_rows(html, site)
+            if island_raw:
+                return island_rows[:size], island_raw, has_mobile
             return rows, raw, has_mobile
     blocks = _VRWRAP_RE.split(html)
     rows = []

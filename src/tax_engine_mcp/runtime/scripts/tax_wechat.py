@@ -1,18 +1,9 @@
 #!/usr/bin/env python3
-"""
-微信公众号文章检索 — 搜狗微信 + 移动端 UA 取正文。
+"""微信公众号文章检索：元宝搜索取清单，微信正文页取全文。
 
-三段流程（每段都经实测确认）：
-  1. 检索：GET https://weixin.sogou.com/weixin?type=2&query=<关键词>
-     type=2 检索文章，type=1 检索公众号（实测 type=1 返回 0 条，不用）。
-  2. 还原真实地址：搜狗给的是 weixin.sogou.com/link?url=... 跳转链接。
-     带 Referer 请求该链接，返回的是 200 的 JS 片段页而不是 302，
-     真实地址被拆成 url += '...' 的若干段拼出，拼接后还要去掉 "@"。
-     不带 Referer 会被重定向到 /antispider/ 反爬页。
-  3. 取正文：GET mp.weixin.qq.com/s?... 用手机版 UA + Referer 请求，
-     正文容器是 id="js_content"。
-
-归属说明：本源是"实务解读"层，权威性低于 NPC 法规与税务总局原文。
+元宝入口返回服务端渲染 HTML，结果自带 mp.weixin.qq.com 文章直链，不需要还原
+搜狗跳转页。结果页、登录墙与验证码墙分别归类；只有明确的空结果页才算零命中。
+本源是实务解读层，权威性低于 NPC 法规与税务总局原文。
 
 Usage:
   python tax_wechat.py "研发费用加计扣除" --size 5
@@ -26,9 +17,10 @@ import re
 import sys
 import tempfile
 import time
+from datetime import datetime
 from html import unescape
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import requests
 import urllib3
@@ -38,15 +30,17 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tax_http  # noqa: E402
 
-SOGOU_SEARCH = "https://weixin.sogou.com/weixin"
-SOGOU_REFERER = "https://weixin.sogou.com/"
+YUANBAO_SEARCH = "https://so.qq.com/isearch"
+YUANBAO_HOME = "https://so.qq.com/"
+UA_DESKTOP = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 UA_MOBILE = ("Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 "
              "(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36")
-HEADERS_SOGOU = {
-    "User-Agent": UA_MOBILE,
+HEADERS_YUANBAO = {
+    "User-Agent": UA_DESKTOP,
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "zh-CN,zh;q=0.9",
-    "Referer": SOGOU_REFERER,
+    "Referer": YUANBAO_HOME,
 }
 HEADERS_WX = {
     "User-Agent": UA_MOBILE,
@@ -54,328 +48,338 @@ HEADERS_WX = {
     "Accept-Language": "zh-CN,zh;q=0.9",
     "Referer": "https://mp.weixin.qq.com/",
 }
-TIMEOUT = 20
-# 0 命中页的标记（2026-11-24 实测：blocks=0 时该 id 必现、blocks=10 时必不现）
-NO_RESULT_MARK = "noresult_part1_container"
-# 单次检索最多还原多少个跳转链接（搜狗对高频请求敏感）
-MAX_RESTORE = 5
-RESTORE_INTERVAL = 1.2
+TIMEOUT = 25
+MAX_BODY_BYTES = 4 * 1024 * 1024
 READ_INTERVAL = 2.0
+MP_HOST = "mp.weixin.qq.com"
 
-# ── 搜狗串行闸（跨进程） ───────────────────────────────────────────────────
-# 搜狗对高频请求敏感：一加压就跳 /antispider/，而且链接还原要靠检索那一次的
-# 会话 cookie，两个进程各查一次等于各持一份会话互相搅。所以跟 NPC 用同一套闸
-# （实现在 tax_http.SerialGate，锁文件分开）。
-# "并发加压会触发反爬"光写在文档里全靠人记；进了闸就不必记了。
-_SOGOU_LOCK_PATH = Path(tempfile.gettempdir()) / "tax-analysis-skill-sogou.lock"
-_SOGOU_LOCK_TIMEOUT = float(os.getenv("TAX_SOGOU_LOCK_TIMEOUT", "180"))
-sogou_gate = tax_http.SerialGate(path=_SOGOU_LOCK_PATH, timeout=_SOGOU_LOCK_TIMEOUT)
-sogou_gate.site = "搜狗微信"        # 只改超时报错里的那句提示
+TITLE_BLOCK = re.compile(
+    r'<a\s+([^>]*?linkid&quot;:&quot;title&quot;[^>]*?)>(.*?)</a>', re.S)
+SOURCE_BLOCK = re.compile(
+    r'<a\s+([^>]*?linkid&quot;:&quot;source&quot;[^>]*?)>(.*?)</a>', re.S)
+HREF_RX = re.compile(r'href=["\']([^"\']+)["\']')
+TAG_RX = re.compile(r"<[^>]+>")
+SPAN_RX = re.compile(r'<span[^>]*>([^<]+)</span>')
+SUMMARY_RX = re.compile(r'class="[^"]*sa-text[^"]*"[^>]*>(.*?)</div>', re.S)
+DATE_RX = re.compile(
+    r"(刚刚|昨天|前天|\d+(?:\.\d+)?\s*(?:分钟|小时|天|周|个月|月|年)前|"
+    r"\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?)")
+ABSOLUTE_DATE_RX = re.compile(r"^\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?$")
+BLOCK_MARKERS = ("环境异常", "验证码", "请完成验证", "系统检测到")
+BLOCK_ANCHORS = ("/antispider/", "antispider.min.js", "anti.min.css")
+LOGIN_WALL_ANCHORS = ("linkid&quot;:&quot;login_page", "请登录后继续查看内容")
+ZERO_RESULT_MARKS = ("js-results", "result-card")
 
-# 闸只保证"同一时刻一个请求"，保证不了"别发太快"，所以另加一个最小间隔。
-_SOGOU_MIN_INTERVAL = 1.0
-_last_sogou_at = 0.0
+_LOCK_PATH = Path(tempfile.gettempdir()) / "tax-engine-yuanbao.lock"
+_LOCK_TIMEOUT = float(os.getenv("TAX_YUANBAO_LOCK_TIMEOUT", "180"))
+yuanbao_gate = tax_http.SerialGate(path=_LOCK_PATH, timeout=_LOCK_TIMEOUT)
+yuanbao_gate.site = "元宝搜索"
+YUANBAO_MIN_INTERVAL = 1.5
+_last_yuanbao_at = 0.0
 
 
-def _sogou_get(sess: "requests.Session", url: str, **kwargs) -> "requests.Response":
-    """打搜狗的请求统一走这里：先限速，再进串行闸。
-
-    只约束 weixin.sogou.com。mp.weixin.qq.com 的正文读取是另一台机器，
-    没有实测到它也有同样的反爬阈值，且读取本身已按 READ_INTERVAL 拉开间隔，
-    所以不往这把闸里塞——不给自己没验证过的结论。
-    """
-    global _last_sogou_at
-    gap = _SOGOU_MIN_INTERVAL - (time.monotonic() - _last_sogou_at)
+def _yuanbao_get(sess: "requests.Session", url: str, **kwargs) -> "requests.Response":
+    global _last_yuanbao_at
+    gap = YUANBAO_MIN_INTERVAL - (time.monotonic() - _last_yuanbao_at)
     if gap > 0:
         time.sleep(gap)
     try:
-        with sogou_gate:
+        with yuanbao_gate:
             return sess.get(url, timeout=TIMEOUT, verify=False, **kwargs)
     finally:
-        _last_sogou_at = time.monotonic()
+        _last_yuanbao_at = time.monotonic()
 
-_ITEM_RE = re.compile(r'<div class="txt-box">.*?</div>\s*</div>', re.DOTALL)
-_LINK_RE = re.compile(r'href="(/link\?url=[^"]+)"')
-_ACCOUNT_RE = re.compile(r'<a[^>]*class="account"[^>]*>(.*?)</a>', re.DOTALL)
-_TITLE_RE = re.compile(r'<h3>\s*<a[^>]*>(.*?)</a>', re.DOTALL)
-_DATE_RE = re.compile(r"timeConvert\('(\d+)'\)")
+
+def _read_capped(response: "requests.Response") -> tuple[bytes, bool]:
+    chunks = []
+    total = 0
+    truncated = False
+    for chunk in response.iter_content(chunk_size=65536):
+        if not chunk:
+            continue
+        if total >= MAX_BODY_BYTES:
+            truncated = True
+            break
+        room = MAX_BODY_BYTES - total
+        chunks.append(chunk[:room])
+        total += len(chunk[:room])
+    return b"".join(chunks), truncated
+
+
+def _decode(raw: bytes, content_type: str) -> str:
+    match = re.search(r"charset=([\w-]+)", content_type or "", re.I)
+    for encoding in ([match.group(1)] if match else []) + ["utf-8", "gbk"]:
+        try:
+            return raw.decode(encoding)
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return raw.decode("utf-8", "replace")
+
+
+def _clean(fragment: str) -> str:
+    return re.sub(r"\s+", " ", unescape(TAG_RX.sub("", fragment or ""))).strip()
+
+
+def _safe_mp_link(href: str) -> str:
+    if not href:
+        return ""
+    try:
+        parts = urlsplit(href.strip())
+        if (parts.scheme not in ("http", "https") or parts.hostname != MP_HOST
+                or parts.port is not None or parts.username is not None
+                or parts.password is not None):
+            return ""
+    except ValueError:
+        return ""
+    return href.strip()
+
+
+def _account(inner: str) -> str:
+    for text in SPAN_RX.findall(inner):
+        value = text.strip()
+        if value and not value.startswith("http") and not DATE_RX.search(value):
+            return value
+    return ""
+
+
+def _date_text(inner: str) -> str:
+    for text in SPAN_RX.findall(inner):
+        value = text.strip()
+        if DATE_RX.search(value):
+            return value
+    return ""
+
+
+def _date_epoch(value: str, now: float) -> int | None:
+    if not value:
+        return None
+    match = re.match(r"^(\d+(?:\.\d+)?)\s*(分钟|小时|天|周|个月|月|年)前$", value)
+    if match:
+        scale = {"分钟": 60, "小时": 3600, "天": 86400, "周": 604800,
+                 "个月": 2592000, "月": 2592000, "年": 31536000}
+        return int(now - float(match.group(1)) * scale[match.group(2)])
+    if value == "刚刚":
+        return int(now)
+    if value == "昨天":
+        return int(now - 86400)
+    if value == "前天":
+        return int(now - 2 * 86400)
+    if ABSOLUTE_DATE_RX.match(value):
+        normalized = value.replace("年", "-").replace("月", "-").replace("日", "")
+        try:
+            parsed = datetime.strptime(normalized, "%Y-%m-%d")
+            return int(time.mktime(parsed.timetuple()))
+        except ValueError:
+            return None
+    return None
+
+
+def _parse_results(page_html: str) -> list[dict]:
+    titles = list(TITLE_BLOCK.finditer(page_html))
+    items = []
+    now = time.time()
+    for index, title_match in enumerate(titles):
+        source_region = page_html[(titles[index - 1].end() if index else 0):title_match.start()]
+        summary_region = page_html[title_match.end():(
+            titles[index + 1].start() if index + 1 < len(titles) else len(page_html))]
+        href_match = HREF_RX.search(title_match.group(1))
+        raw_link = unescape(href_match.group(1)) if href_match else ""
+        title = _clean(title_match.group(2))
+        if not title:
+            continue
+        source_match = SOURCE_BLOCK.search(source_region)
+        source_inner = source_match.group(2) if source_match else ""
+        date_text = _date_text(source_inner)
+        epoch = _date_epoch(date_text, now)
+        summary_match = SUMMARY_RX.search(summary_region)
+        link = _safe_mp_link(raw_link)
+        item = {
+            "title": title,
+            "account": _account(source_inner),
+            "summary": _clean(summary_match.group(1)) if summary_match else "",
+            "date": time.strftime("%Y-%m-%d", time.localtime(epoch)) if epoch else "",
+            "date_text": date_text,
+            "date_approx": bool(date_text and not ABSOLUTE_DATE_RX.match(date_text)),
+            "timestamp": epoch,
+            "url": link,
+        }
+        if not link:
+            item["_error"] = "元宝结果链接不是 mp.weixin.qq.com 文章直链"
+        items.append(item)
+    return items
+
+
+def _blocked_reason(page_html: str) -> str:
+    hits = [marker for marker in BLOCK_MARKERS if marker in page_html]
+    if any(anchor in page_html.lower() for anchor in BLOCK_ANCHORS):
+        hits.append("antispider 结构锚")
+    return "、".join(hits)
 
 
 def search_wechat(keyword: str, size: int = 5, read_body: bool = False) -> dict:
-    """
-    检索微信公众号文章。
+    """检索公众号文章；read_body=True 时再逐篇读取微信正文。"""
+    if not keyword.strip():
+        return _empty(keyword, "检索词不能为空")
+    if size < 1:
+        return _empty(keyword, "size 必须大于 0")
 
-    Args:
-        keyword: 检索词
-        size: 返回条数上限
-        read_body: True 时再逐篇取正文
-
-    Returns:
-        {"keyword","total","results","searched_at","source","_error"?}
-    """
-    url = f"{SOGOU_SEARCH}?type=2&query={quote(keyword)}"
-    # 检索与还原必须共用一个 Session：还原链接要靠检索时拿到的
-    # SNUID/SUID cookie，脱离会话会被判成爬虫跳到 antispider。
+    url = f"{YUANBAO_SEARCH}?tab=weixin_article&query={quote(keyword, safe='')}"
     sess = requests.Session()
-    sess.headers.update(HEADERS_SOGOU)
+    sess.headers.update(HEADERS_YUANBAO)
     try:
-        r = _sogou_get(sess, url)
-    except requests.RequestException as e:
-        return _empty(keyword, str(e))
+        response = _yuanbao_get(sess, url, stream=True)
+    except requests.RequestException as exc:
+        return _empty(keyword, f"元宝请求失败：{exc}")
 
-    if r.status_code != 200:
-        return _empty(keyword, f"HTTP {r.status_code}")
-    if "/antispider/" in r.url:
-        return _empty(keyword, "触发搜狗反爬（antispider）")
+    try:
+        if response.status_code != 200:
+            return _empty(keyword, f"元宝返回 HTTP {response.status_code}")
+        landed = response.url or ""
+        if "/antispider/" in landed or "antip=web_hd" in landed or "antip=wap_hd" in landed:
+            return _empty(keyword, "元宝跳转到反爬或验证页")
+        try:
+            raw, truncated = _read_capped(response)
+        finally:
+            response.close()
+    except requests.RequestException as exc:
+        return _empty(keyword, f"元宝响应读取失败：{exc}")
 
-    blocks = _ITEM_RE.findall(r.text)
-    if not blocks:
-        # 真 0 命中与"页面结构变了"分开判。实测判据：站点在 0 命中页里放
-        # `<div class="b404-box" id="noresult_part1_container">` 且正文写
-        # "没有找到相关的微信公众号文章。"；有结果的页面（实测 blocks=10 两例）
-        # 都不带这枚标记。原先一句"检索结果为空或页面结构已变"把两者捏在一起，
-        # 于是**合法的零命中也被报成取数失败**（聚合层 tax_aggregator.py:381
-        # 只认 _error 就记进 errors）——那是反向的错：把"没有"说成"失败"。
-        #
-        # 3.62.33 起再分出第三态：**HTTP 200 但正文 0 字节**。2026-11-25 与
-        # 11-26 两轮实测（五枚词各一发、另四档对照与真浏览器同址）：任何词都回
-        # 200 / 0 字节 / `Content-Type: text/plain`，连 11-24 有结果的词与真 0
-        # 命中的词都一样；真浏览器同址也是空白页（`browser_snapshot` 零节点、网络
-        # 面板只剩 favicon）。这既不是"0 命中"（那样会带 noresult 标记），也不是
-        # "页面改版"（改版至少给一份 HTML）——是站点侧这一路当天断供。三种成因
-        # 压成一句话，读者会照着去排查改版与验证页，白跑一趟。
-        if not r.content:
-            return _empty(keyword, "搜狗微信回的是 HTTP 200 但正文 0 字节：这一路当天没给页面"
-                                  "（不是这一栏查不到，也不是页面结构变了——那两种都至少回一份 HTML）")
-        if NO_RESULT_MARK in r.text:
+    if truncated:
+        return _empty(keyword, f"元宝响应超过 {MAX_BODY_BYTES} 字节上限并被截断")
+    if not raw:
+        return _empty(keyword, "元宝返回 HTTP 200 但正文 0 字节：这一路当前未提供检索页面")
+
+    page_html = _decode(raw, response.headers.get("Content-Type", ""))
+    parsed = _parse_results(page_html)
+    if not parsed:
+        if any(anchor in page_html for anchor in LOGIN_WALL_ANCHORS):
+            return _empty(keyword, "元宝返回登录墙：当前会话未提供公众号检索结果；"
+                                  "本模块不读取浏览器登录态")
+        blocked = _blocked_reason(page_html)
+        if blocked:
+            return _empty(keyword, f"元宝返回验证或拦截页（{blocked}）")
+        if any(marker in page_html for marker in ZERO_RESULT_MARKS):
             return _empty(keyword)
-        return _empty(keyword, "搜狗微信返回的页面有内容，但既没有结果块也没有无结果提示：可能改版或落在验证页")
+        return _empty(keyword, "元宝页面有内容，但没有结果锚点、登录墙、验证码或空结果标记："
+                              "页面结构可能已变")
 
-    results = []
-    for block in blocks:
-        link = _LINK_RE.search(block)
-        if not link:
-            continue
-        title_m = _TITLE_RE.search(block)
-        account_m = _ACCOUNT_RE.search(block)
-        date_m = _DATE_RE.search(block)
-
-        results.append({
-            "title": _clean(title_m.group(1)) if title_m else "",
-            "account": _clean(account_m.group(1)) if account_m else "",
-            "date": _fmt_ts(date_m.group(1)) if date_m else "",
-            "_link": "https://weixin.sogou.com" + link.group(1),
-        })
-        if len(results) >= size:
-            break
-
-    # 还原真实地址（逐个请求，带间隔）
-    for i, item in enumerate(results):
-        real, err = _restore_url(item.pop("_link"), sess)
-        item["url"] = real
-        if err:
-            item["_error"] = err
-        if i < len(results) - 1:
-            time.sleep(RESTORE_INTERVAL)
+    results = parsed[:size]
+    lost_link = sum(1 for item in results if not item["url"])
+    if lost_link == len(results):
+        return _empty(keyword, f"元宝给出 {len(results)} 条结果，但没有一条有效的微信文章直链")
 
     if read_body:
-        for i, item in enumerate(results):
-            if not item.get("url"):
-                continue
-            content, err = read_article(item["url"])
+        readable = [item for item in results if item["url"]]
+        for index, item in enumerate(readable):
+            content, error = read_article(item["url"])
             item["content"] = content
-            if err:
-                item["_error"] = err
-            if i < len(results) - 1:
+            if error:
+                item["_error"] = error
+            if index < len(readable) - 1:
                 time.sleep(READ_INTERVAL)
 
+    lost_body = sum(1 for item in results
+                    if item["url"] and read_body and not item.get("content"))
     for item in results:
         item["source"] = "微信公众号"
         item["source_label"] = "实务解读"
-        if not item.get("url"):
-            continue
-
-    # 逐枚失败必须汇到顶层。三个消费面读的都是顶层：`tax_related.search_practice_sources`
-    # 只看 `data.get("_error")`、`tax_aggregator.py:381` 只把顶层 `_error` 记进 errors、
-    # `tax_answer._rows_and_error` 也只看顶层——条目身上的 `_error` 谁也看不见。实测
-    # （2026-11-24 探针 `.tmp-inspect\partial_loss_surfaces.py`，双臂 × 三面）三枚里
-    # 两枚还原失败时，实务那一路交回 1 条而说明为空，调用方读成「网上只有 1 篇解读」；
-    # 三枚全失败时读成「网上没有解读」。那是红线⑦。
-    # 顶层 `_error` 的语义是「这一路整体没取到」，这里不借它：清单确实取回了，
-    # 只是逐枚的链接/正文没拿到——写成整体失败会把已取回的那几条一起作废。
-    lost_link = sum(1 for i in results if not i.get("url"))
-    lost_body = sum(1 for i in results
-                    if i.get("url") and read_body and not i.get("content"))
-    parts = []
-    if lost_link:
-        parts.append(f"{lost_link}/{len(results)} 条没还原出真实地址")
-    if lost_body:
-        parts.append(f"{lost_body}/{len(results)} 条没取到正文")
 
     out = {
         "keyword": keyword,
         "total": len(results),
         "results": results,
         "searched_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "source": "微信公众号 (搜狗微信)",
+        "source": "微信公众号 (元宝搜索)",
         "_from_cache": False,
     }
+    parts = []
+    if lost_link:
+        parts.append(f"{lost_link}/{len(results)} 条没有有效微信直链")
+    if lost_body:
+        parts.append(f"{lost_body}/{len(results)} 条没取到正文")
     if parts:
-        out["_partial_error"] = ("站点给了 %d 条，但%s（逐枚原因见各条的 `_error`）："
+        out["_partial_error"] = ("元宝给出了 %d 条，但%s（逐枚原因见各条 `_error`）："
                                  "这些条目不能当成完整的一轮用" % (len(results), "、".join(parts)))
-    elif not results:
-        # 走到这里说明结果块是有的（否则前面 NO_RESULT_MARK 或改版那句先返回），
-        # 却一枚直链都没解析出来：那是页面结构变了，不是站内 0 条。原来这一支
-        # 回的是"total=0 且没有任何说明"，三个消费面全读成"确实没有解读"。
-        out["_error"] = "搜狗微信返回了结果块，但一枚真实地址都没解析出来：页面结构可能改版"
-        out["_fetch_failed"] = True
     return out
 
 
-def _restore_url(link: str, sess: "requests.Session") -> tuple[str, str]:
-    """
-    还原搜狗跳转链接对应的真实 mp.weixin.qq.com 地址。
-
-    Args:
-        link: 搜狗 /link?url=... 地址
-        sess: 与检索共用、已带上 SNUID/SUID cookie 的会话
-
-    Returns:
-        (真实地址, 错误信息)。成功时错误信息为空串。
-    """
-    try:
-        r = _sogou_get(sess, link, headers=HEADERS_SOGOU, allow_redirects=False)
-    except requests.RequestException as e:
-        return "", str(e)
-
-    if r.status_code != 200:
-        return "", f"HTTP {r.status_code}"
-    if "/antispider/" in r.url:
-        return "", "触发搜狗反爬（antispider）"
-
-    # 页面把真实地址拆成 url += '片段' 的形式，逐段拼出
-    parts = re.findall(r"url \+= '([^']*)'", r.text)
-    if not parts:
-        return "", "未在跳转页中找到 url 片段（页面结构可能已变）"
-    return "".join(parts).replace("@", ""), ""
-
-
 def read_article(url: str) -> tuple[str, str]:
-    """
-    取公众号文章正文纯文本。
-
-    Returns:
-        (正文纯文本, 错误信息)。成功时错误信息为空串。
-    """
+    """读取 mp.weixin.qq.com 文章正文纯文本。"""
     try:
-        r = requests.get(url, headers=HEADERS_WX, timeout=TIMEOUT, verify=False)
-    except requests.RequestException as e:
-        return "", str(e)
+        response = requests.get(url, headers=HEADERS_WX, timeout=TIMEOUT, verify=False)
+    except requests.RequestException as exc:
+        return "", str(exc)
+    if response.status_code != 200:
+        return "", f"HTTP {response.status_code}"
+    if "appmsgcaptcha" in response.url:
+        return "", ("微信验证码门（落地 wappoc_appmsgcaptcha，HTTP 200 非正文）："
+                    "需登录态或人工过验证，浏览器同样被拦，降级用检索摘要")
 
-    if r.status_code != 200:
-        return "", f"HTTP {r.status_code}"
-
-    # 实测（2026-11-23）：这道墙是 IP/环境级验证码门，HTTP 全程 200，只靠状态码与正文
-    # 关键词都判不出来——用本模块的手机版 UA 取回的那份落地页里，"环境异常/验证/去验证/
-    # tcaptcha" 一个都不出现（正文只有视频/小程序/赞等壳文案），所以早先按正文关键词的
-    # 分支实际从不命中，验证码门被误报成"未找到正文容器"。可靠信号是**落地 URL**：
-    # 302 到 /mp/wappoc_appmsgcaptcha（requests 跟随重定向后 r.url 即是）。
-    # 真实浏览器（Edge over CDP）打开同一枚签名 URL 也被 302 到同一处，故"换浏览器就能
-    # 取正文"是错的；无登录态/未人工过验证时正文取不到，只能降级用检索摘要。
-    if "appmsgcaptcha" in r.url:
-        return "", "微信验证码门（落地 wappoc_appmsgcaptcha，HTTP 200 非正文）：需登录态或人工过验证，浏览器同样被拦，降级用检索摘要"
-
-    m = re.search(r'<div[^>]*id="js_content"[^>]*>(.*?)</div>\s*(?:<script|</div>)',
-                  r.text, re.DOTALL)
-    if not m:
-        if "环境异常" in r.text or "验证" in r.text:
-            # 正文关键词只在别的 UA/别的落地页形态下出现，留作兜底，不再是主判据。
-            return "", "微信返回验证页（正文含环境异常/验证），需登录态或人工过验证，浏览器同样被拦"
+    match = re.search(r'<div[^>]*id="js_content"[^>]*>(.*?)</div>\s*(?:<script|</div>)',
+                      response.text, re.DOTALL)
+    if not match:
+        if "环境异常" in response.text or "验证" in response.text:
+            return "", "微信返回验证页（正文含环境异常/验证），需登录态或人工过验证"
         return "", "未找到正文容器 js_content"
-
-    body = m.group(1)
-    body = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", body, flags=re.DOTALL)
-    paras = re.findall(r"<p[^>]*>(.*?)</p>", body, re.DOTALL)
-    lines = [_clean(p) for p in paras]
-    text = "\n".join(l for l in lines if l)
+    body = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", match.group(1), flags=re.DOTALL)
+    lines = [_clean(paragraph) for paragraph in re.findall(r"<p[^>]*>(.*?)</p>", body, re.DOTALL)]
+    text = "\n".join(line for line in lines if line)
     if not text:
         return "", "正文段落为空"
     return text, ""
 
 
-def _clean(fragment: str) -> str:
-    """去标签、解实体、压空白。"""
-    text = re.sub(r"<[^>]+>", "", fragment)
-    text = unescape(text)
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _fmt_ts(ts: str) -> str:
-    try:
-        return time.strftime("%Y-%m-%d", time.localtime(int(ts)))
-    except (ValueError, OSError):
-        return ""
-
-
 def _empty(keyword: str, error: str = "") -> dict:
-    """空结果信封。3.62.26 起按统一出口标记契约分流：带 error 的是请求层面
-    的失败（HTTP 非 200、被反爬、页面改版认不出结构），打 `_fetch_failed`；
-    不带 error 的是这一轮检索成功、答案就是 0 条，打 `_zero_hit`。
-    两枚都不打的中间态不存在——调用方要么给了说明要么没给。"""
     out = {
         "keyword": keyword,
         "total": 0,
         "results": [],
         "searched_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "source": "微信公众号 (搜狗微信)",
+        "source": "微信公众号 (元宝搜索)",
         "_error": error,
         "_from_cache": False,
     }
-    if error:
-        out["_fetch_failed"] = True
-    else:
-        out["_zero_hit"] = True
+    out["_fetch_failed" if error else "_zero_hit"] = True
     return out
 
 
-# ── CLI ─────────────────────────────────────────────────────────────────────
 def main():
-    p = argparse.ArgumentParser(description="微信公众号文章检索（搜狗微信）")
-    p.add_argument("keyword", help="检索词")
-    p.add_argument("--size", type=int, default=5)
-    p.add_argument("--read", action="store_true", help="同时取回正文")
-    p.add_argument("--json", action="store_true")
-    args = p.parse_args()
+    parser = argparse.ArgumentParser(description="微信公众号文章检索（元宝搜索）")
+    parser.add_argument("keyword", help="检索词")
+    parser.add_argument("--size", type=int, default=5)
+    parser.add_argument("--read", action="store_true", help="同时取回正文")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
 
-    result = search_wechat(args.keyword, size=min(args.size, MAX_RESTORE),
-                           read_body=args.read)
-
+    result = search_wechat(args.keyword, size=args.size, read_body=args.read)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return
-
-    print(f"🔍 微信公众号检索 \"{args.keyword}\" | {result['searched_at']}")
+    print(f"微信公众号检索（元宝） \"{args.keyword}\" | {result['searched_at']}")
     if result.get("_error"):
-        print(f"⚠️  {result['_error']}")
+        print(f"错误: {result['_error']}")
+    if result.get("_partial_error"):
+        print(f"部分失败: {result['_partial_error']}")
     print(f"共 {result['total']} 条\n")
     for item in result["results"]:
         print(f"  {item.get('title', '')[:70]}")
         if item.get("account"):
             print(f"     公众号: {item['account']}")
         if item.get("date"):
-            print(f"     日期: {item['date']}")
-        print(f"     {item.get('url') or '（未还原）'}")
+            qualifier = "（相对时间折算）" if item.get("date_approx") else ""
+            print(f"     日期: {item['date']}{qualifier}")
+        print(f"     {item.get('url') or '（无有效微信直链）'}")
         if item.get("_error"):
-            print(f"     ⚠️ {item['_error']}")
+            print(f"     错误: {item['_error']}")
         elif item.get("content"):
             print(f"     正文 {len(item['content'])} 字，节选：{item['content'][:100]}...")
         print()
 
 
 if __name__ == "__main__":
-    for _stream in (sys.stdout, sys.stderr):
+    for stream in (sys.stdout, sys.stderr):
         try:
-            _stream.reconfigure(encoding='utf-8', errors='replace')
+            stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, ValueError):
             pass
     main()

@@ -531,6 +531,96 @@ def _clean(fragment: str) -> str:
     return re.sub(r"\s+", " ", unescape(_TAG_RE.sub("", fragment))).strip()
 
 
+SUGGEST_URL = f"{CHINATAX_HOST}/search5/search/suggestFGK"
+# public.js 里这个端点的 column/label 是写死在 URL 字符串上的（2026-11-26 从脚本
+# 原文逐字抄下），不是前端参数对象。label 那十枚与上面 FILE_LABELS 同一族但顺序不同。
+SUGGEST_COLUMN = "政策法规,政策解读,政策指引"
+
+
+def suggest_fgk(keyword: str, typename: str = "文件") -> dict:
+    """法规库标题联想：交回站点给的标题清单，只读旁路，不接进检索主链。
+
+    这一档 2026-11-26 首次实测（此前只从 `public.js` 源码读出过端点与消费方式，
+    从没发过请求；读数见 search_source/chinatax/NOTE.md 第四节）：
+      * 匿名可达，无墙；`GET https://www.chinatax.gov.cn/search5/search/suggestFGK`
+        （**www 主机**，不是 fgk 域），`Content-Type: application/json;charset=UTF-8`；
+      * **正文是双层 JSON**——顶层 parse 出来还是一个字符串，要再 parse 一次才拿到
+        `{"suggestFGKList": […]}`。public.js 里 `JSON.parse(res).suggestFGKList`
+        那句正是这个意思（`$.ajax` 没声明 dataType，jQuery 把响应当字符串交回）；
+      * 清单条目是**带 `<span>` 高亮的标题字符串**，不是对象：没有 url、没有文号，
+        所以它只能当「这个说法在库里叫什么名字」用，不能当命中数用；
+      * 五发实测（增值税 602B / 增值 576B / 留抵退税 773B / 研发费用加计扣除 1024B /
+        小规模纳税人 669B）每次都是 6 条；**空检索词也回 6 条**（426B），说明空态是
+        内容不是报错；
+      * `typename` 只认「文件」：同词改 `typename=新闻` 回 25B 的 `{"suggestFGKList":[]}`。
+
+    为什么不接进 `search_chinatax`：它给的是标题建议，性质是「文件类的命名基数」，
+    接进主链就等于让一个说不清统计口径的端点参与「库里有没有这份文件」的结论。
+
+    Returns:
+        {"keyword","titles","count","source","_from_cache"}；空清单带 `_zero_hit`
+        （这一路跑成了、就是这个频道没有联想），取数失败带 `_error` + `_fetch_failed`。
+    """
+    params = {
+        "siteCode": SITE_CODE,
+        "indexCode": "1",
+        "typename": typename,
+        "searchWord": keyword,
+        "column": SUGGEST_COLUMN,
+        "label": FILE_LABELS,
+    }
+    log = tax_http.new_log()
+    r, err, _blocked = tax_http.attempt(
+        lambda: requests.get(SUGGEST_URL, params=params, headers=HEADERS,
+                             timeout=TIMEOUT, verify=False),
+        SUGGEST_URL, log)
+    out = {"keyword": keyword, "titles": [], "count": 0,
+           "source": "chinatax.gov.cn", "_from_cache": False}
+    if err:
+        out.update({"_error": f"联想接口没连上：{err}", "_fetch_failed": True,
+                    "_attempts": list(log)})
+        return out
+    if r.status_code != 200:
+        out.update({"_error": f"联想接口回 HTTP {r.status_code}",
+                    "_fetch_failed": True, "_attempts": list(log)})
+        return out
+    try:
+        payload = json.loads(r.text)
+    except ValueError as e:
+        out.update({"_error": f"联想响应不是 JSON: {e}", "_fetch_failed": True,
+                    "_attempts": list(log)})
+        return out
+    if isinstance(payload, str):
+        # 双层 JSON：外层 parse 出来还是字符串。这一层解不开就是改版，不是空清单。
+        try:
+            payload = json.loads(payload)
+        except ValueError as e:
+            out.update({"_error": f"联想内层 JSON 解不开: {e}",
+                        "_fetch_failed": True, "_attempts": list(log)})
+            return out
+    if not isinstance(payload, dict):
+        out.update({"_error": f"联想回显顶层不是对象而是 {type(payload).__name__}",
+                    "_fetch_failed": True, "_attempts": list(log)})
+        return out
+    raw = payload.get("suggestFGKList")
+    if raw is None:
+        out.update({"_error": "联想回显里没有 suggestFGKList 这个键（站点改了字段名）",
+                    "_fetch_failed": True, "_attempts": list(log)})
+        return out
+    if not isinstance(raw, list):
+        out.update({"_error": f"suggestFGKList 不是清单而是 {type(raw).__name__}",
+                    "_fetch_failed": True, "_attempts": list(log)})
+        return out
+    titles = [_clean(x) for x in raw if isinstance(x, str)]
+    titles = [x for x in titles if x]
+    out["titles"] = titles
+    out["count"] = len(titles)
+    if not titles:
+        # 跑成了、就是这个频道没有联想（实测 typename=新闻 那一档）。
+        out["_zero_hit"] = True
+    return out
+
+
 def _attachments(raw) -> list:
     """把接口 appendix 栏的附件收成 [{name,type,url}]。
 

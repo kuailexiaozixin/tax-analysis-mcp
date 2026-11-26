@@ -562,7 +562,7 @@ _last_request_at = 0.0
 # NPC 限流不回 429，而是断连、或回一份挑战页（见 _is_challenge_page）。几个
 # 脚本并发跑必现，文档里写"必须串行"太软，这里直接用锁强制：同一时刻只允许
 # 一个进程打 NPC。锁在进程退出时由操作系统自动释放，崩溃不会留死锁。
-# 闸本体在 tax_http.SerialGate（搜狗微信共用同一份实现），这里只钉 NPC 的默认值。
+# 闸本体在 tax_http.SerialGate（搜狗手机网页与元宝搜索共用同一份实现），这里只钉 NPC 的默认值。
 SERIAL_LOCK_TIMEOUT = float(os.getenv("TAX_NPC_LOCK_TIMEOUT", "180"))
 _SERIAL_LOCK_PATH = Path(tempfile.gettempdir()) / "tax-analysis-skill-npc.lock"
 
@@ -570,8 +570,8 @@ _SERIAL_LOCK_PATH = Path(tempfile.gettempdir()) / "tax-analysis-skill-npc.lock"
 class NpcSerialGate(tax_http.SerialGate):
     """NPC 站专用闸：锁文件与超时环境变量都钉在 NPC 上。
 
-    锁的实现只有一份，在 tax_http.SerialGate —— 搜狗微信那边也要用同一套
-    （并发加压会触发反爬），两处各抄一遍文件锁代码迟早只改一处。
+    锁的实现只有一份，在 tax_http.SerialGate —— 搜狗手机网页与元宝搜索也共用
+    同一套，各处各抄一遍文件锁代码迟早只改一处。
     这里只负责把 NPC 的默认值固定下来，不改变调用方看到的签名与行为。
     """
 
