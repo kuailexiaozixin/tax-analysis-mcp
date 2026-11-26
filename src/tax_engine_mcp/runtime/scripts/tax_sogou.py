@@ -58,6 +58,11 @@ _ANTISPIDER_MARKS = ("/antispider/", "antip=web_hd", "antip=wap_hd")
 # 零结果页的文案（"站内没有找到能和“…”匹配的内容"）。有结果块时不按它判，
 # 免得摘要里出现同一句话被误读成 0 条。
 _NO_RESULT_MARK = "没有找到"
+# 手机入口 site: 限定下站点自报「站内无定制结果」那一档的 class（2026-11-26 量到：
+# 结果区里那枚 div 写成 class="vrResult site-vr-none"，可见文本「抱歉，未找到
+# “shui5.cn”站内包含“增值税”的内容」）。注意手机页说的是「未找到」，上面那枚
+# 桌面文案「没有找到」在手机上一个字都不出现——所以它认不出这一档。
+_SITE_NONE_CLASS = "site-vr-none"
 _VRWRAP_RE = re.compile(r'(?=<div[^>]*class="[^"]*\bvrwrap\b)')
 _DATA_URL_RE = re.compile(r'data-url="(https?://[^"]+)"')
 _TITLE_RE = re.compile(r'<h3[^>]*class="[^"]*vr-title[^"]*"[^>]*>(.*?)</h3>', re.S)
@@ -290,10 +295,13 @@ class _MobileResultsParser(HTMLParser):
         self.card_depth = 0
         self.cards = []
         self.has_results = False
+        self.site_none = False
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         classes = (attrs.get("class") or "").split()
+        if _SITE_NONE_CLASS in classes:
+            self.site_none = True
         if tag == "div" and "vrResult" in classes and self.card is None:
             self.has_results = True
             self.card_depth = len(self.stack)
@@ -405,6 +413,19 @@ def _parse(html: str, site: str = "", size: int = 10) -> tuple[list, int, bool]:
     return rows[:size], raw, bool(blocks[1:])
 
 
+def _declares_no_site_results(html: str) -> bool:
+    """站点在手机入口自报「这个站内没有匹配内容」（class 带 site-vr-none）。
+
+    判据走 HTMLParser 的 class 词元，不拿正则裸匹这个类名：脚本里出现过
+    这四个字不算数（同一枚理由已在 test_mobile_class_name_in_script_is_not_
+    a_result_area 上钉着）。
+    """
+    parser = _MobileResultsParser()
+    parser.feed(html)
+    parser.close()
+    return parser.site_none
+
+
 def _payload(keyword: str, site: str, rows: list, searched_at: str,
              from_cache: bool = False) -> dict:
     out = {
@@ -493,6 +514,15 @@ def sogou_search(keyword: str, site: str = "", size: int = 10) -> dict:
         out = _payload(keyword, site, rows, "")
         _remember(key, out)
         return _payload(keyword, site, rows[:size], out["searched_at"])
+    if _declares_no_site_results(html):
+        # 2026-11-26 量到：手机入口 site: 限定下，站点对真 0 条自报的形状是
+        # class="vrResult site-vr-none" +「未找到」（桌面那枚「没有找到」一个字
+        # 都不出现）。旧出口把这一档落进「结构可能改版」（_fetch_failed），把
+        # 「没搜到」与「取数失败」语义写反了——判据与重测见
+        # search_source/sogou/NOTE.md。
+        out = _empty(keyword, site)
+        _remember(key, out)
+        return out
     if _NO_RESULT_MARK in html and not has_vrwrap:
         out = _empty(keyword, site)
         _remember(key, out)
