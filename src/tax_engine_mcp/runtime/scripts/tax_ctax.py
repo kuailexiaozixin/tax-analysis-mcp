@@ -107,8 +107,15 @@ PAGE_SIZE_MAX = 5000
 # 匹配域靠"提交哪一枚位置参数"表达，不给 q 加限定。站点认 q/title/content/keyword/author
 # 五枚、各只单用；本层的 content 走 q=（全文档），站点那枚 content= 只匹配正文、比 q 窄，
 # 本层没接，两档差异的计数记在 NOTE.md「Search.do 的参数值域」。
-MATCH_POSITIONS = {"content": "q", "title": "title",
-                   "keyword": "keyword", "author": "author"}
+# doc_number→subtitle 是 2026-11-27 补的第六枚：站点的文号装在检索行的 subtitle 列，
+# 所以「按文号找这一份」只有走这一枚才准。量出来的差有多宽（同轮单发，间隔 4 秒）：
+#   「国家税务总局公告2025年第15号」q= 报 10 条、并条交回 6 篇，其中文号真在 subtitle
+#     列的只有 1 篇，其余 5 篇是正文援引了这枚文号的解读文章；subtitle= 报 1、title= 报 0。
+#   「财税〔2016〕36号」q= 报 1,210 条，subtitle= 报 1（就是那份原文）。
+# 写法不用归一：全角〔2016〕与半角[2016] 各报 1 且回 824 字节逐字节相同，机关名带不带
+# 空格各报 4 且 3,249 字节相同——站点自己在列里存的是带空格全角那一形。
+MATCH_POSITIONS = {"content": "q", "title": "title", "keyword": "keyword",
+                   "author": "author", "doc_number": "subtitle"}
 # 本层的 0 = 不提交这一枚（拿到两端并集）；站点侧 0、3、20、-1 四枚实测回同一份
 # 37 字节空结构（逐字节读数见 NOTE.md「触屏端与整站规模」）。
 CHANNELS_ACCEPTED = (CHANNEL_WEB, CHANNEL_TOUCH)
@@ -326,7 +333,11 @@ def search_ctax(keyword: str, size: int = 5, *, node=None, date_from: str = "",
                 而该栏发布年份实际只铺到 2020-2025，那个 0 是真的没有，不是过滤失效）。
       match     提交哪一枚位置参数：content→`q`（全文，默认）、title→只匹配标题、
                 keyword→只匹配站点的关键词字段、author→只匹配 author（那一段装的是
-                成文日期，实际用处有限）。这四枚之外的取值不发出去——本层过去会静默
+                成文日期，实际用处有限）、doc_number→只匹配站点的文号列（检索行里的
+                `subtitle` 字段；q= 会把正文援引这枚文号的解读文章也带上——
+                「国家税务总局公告2025年第15号」q= 报 10 条里只有 1 条文号真在列里，
+                「财税〔2016〕36号」q= 报 1,210 条、doc_number= 报 1 条就是那份原文）。
+                这五枚之外的取值不发出去——本层过去会静默
                 回落到 q，那份读数看着像"限定生效了"其实没有，所以拦在发出之前。
       channel   1=网站（默认）。2=触屏端只有 18 行（16 行「总局微信内容」加 2 行「测试栏目」，
                 2018-07 至 2019-10），`url` 全是三段老形态、`urlpad` 补的是 `news` 段，
@@ -374,7 +385,7 @@ def search_ctax(keyword: str, size: int = 5, *, node=None, date_from: str = "",
                                f"站点这一档越界直接回 HTTP 500"}
     if match not in MATCH_POSITIONS:
         return {"results": [], "total": None,
-                "_status": f"没走成：match「{match}」不在站点认的四枚里"
+                "_status": f"没走成：match「{match}」不在站点认的六枚里"
                            f"（{'、'.join(MATCH_POSITIONS)}）；本层不把它换成 q 发出去，"
                            f"那看着像限定了匹配域、其实取的是全文"}
     if channel not in CHANNELS_ACCEPTED and channel != 0:
@@ -392,13 +403,14 @@ def search_ctax(keyword: str, size: int = 5, *, node=None, date_from: str = "",
 
     params = {"pageNo": 1, "pageSize": SEARCH_PAGE_SIZE,
               "sort": SORT_ONLY, "siteID": SITE_ID}
-    # 匹配域是"提交哪一枚参数名"，不是给 q 加限定：站点认 q/title/content/keyword/author 五枚，
-    # 各自单用。同一枚「增值税」在省略 channel 的并集口径下 q= 46,889、title= 11,911、
-    # keyword= 908，显式 channel=1 那一路是 46,871 / 11,909 / 46,498 / 908 / 0（author 段空）。
-    # 而 q= 与 title= 同时提交时 foundNum 仍是 q 单发那一份——**q 会把位置参数盖掉**，
-    # 所以只匹配标题时必须只发 title=，不能 q= 与 title= 一起发。
-    # 站点的 content= 比 q= 窄（同一枚「出口退税」q= 9,804、content= 9,746），本层不接：
-    # match=content 走的是 q（全文档），差异读数与取样口径记在 NOTE.md。
+    # 匹配域是"提交哪一枚参数名"，不是给 q 加限定：站点认 q/title/content/keyword/author/subtitle
+    # 六枚，各只单用。同一枚「增值税」显式 channel=1 那一路 2026-11-27 复量是
+    # 46,986 / 11,928 / 46,609 / 908 / 0 / 50（省略 channel 的并集口径旧读数记在 NOTE.md）。
+    # 而 q= 与其余任一枚同时提交时 foundNum 仍是 q 单发那一份——**q 会把位置参数全盖掉**
+    # （对 title/subtitle/content/keyword 各验一发），所以限定匹配域时必须只发对应那一枚。
+    # 不含 q 的两枚之间取交集（content=增值税 46,609 × title=出口退税 11,928 ⇒ 551）。
+    # 本层的 match=content 走的是 q（全文档），与站点自己那枚只匹配正文的 content=
+    # 不是一回事；差异读数与取样口径记在 NOTE.md「Search.do 的参数值域」。
     params[MATCH_POSITIONS[match]] = keyword or ""
     if channel:
         # 0 在本层当作"不限"：省掉这一枚是两端并集；站点侧直接给 channel=0 回空结构，
@@ -505,6 +517,16 @@ def search_ctax(keyword: str, size: int = 5, *, node=None, date_from: str = "",
 def find_by_doc_number(doc_number: str, session: requests.Session | None = None) -> dict:
     """只有一枚文号时回站内定位。
 
+    先走窄的那一枚：2026-11-27 实测 `q=` 是全文匹配，会把正文里援引了这枚文号的
+    解读文章一起带回来——「国家税务总局公告2025年第15号」q= 报 10 条、并条交回 6 篇，
+    其中文号真在列里的只有 1 篇；「财税〔2016〕36号」q= 报 1,210 条，而
+    `match="doc_number"`（站点的 subtitle 列）报 1 条就是那份原文。站点在这一枚上
+    不在乎写法：全角〔2016〕与半角[2016] 回逐字节相同的 824 字节，机关名带不带空格
+    回相同的 3,249 字节，所以这一档只发一发。
+    窄的那一枚回 0 条不等于站内没有这份文件——200 行取样里只有 47 行的 subtitle 有值，
+    多数行根本没录文号。所以 0 条要回落 `q=` 那一档重跑，并把换过查询这件事写进
+    `_caveat`，别让读者把窄档的空当成定论。
+
     文号在检索行里就是 `subtitle` 字段，所以**带 title= 的文号检索取不到**：
     2026-10-19 实测 `title="2026年第29号"` 回 0 条，而整串 `q="财政部 税务总局公告2026年第29号"`
     回 4 条且首行就是目标。`q` 按整串匹配，空白不影响（带空格与去掉空格两种写法
@@ -514,14 +536,20 @@ def find_by_doc_number(doc_number: str, session: requests.Session | None = None)
     doc = (doc_number or "").strip()
     if not doc:
         return {"doc_number": doc, "results": [], "total": None, "_status": "没走成：没给文号"}
-    variants = [doc, re.sub(r"\s+", "", doc)]
-    tried, last = [], None
-    for q in dict.fromkeys(variants):
-        tried.append(q)
-        r = search_ctax(q, size=0, fetch_all=True, max_rows=200, session=session)
-        last = r
-        if r["results"]:
-            break
+    tried, last, narrow_hit = [], None, False
+    s_narrow = search_ctax(doc, size=0, fetch_all=True, max_rows=200,
+                           match="doc_number", session=session)
+    tried.append(f"doc_number={doc}")
+    last = s_narrow
+    if s_narrow["results"]:
+        narrow_hit = True
+    else:
+        for q in (doc, re.sub(r"\s+", "", doc)):
+            if q not in [t.split("=", 1)[1] for t in tried if t.startswith("q=")]:
+                tried.append(f"q={q}")
+                last = search_ctax(q, size=0, fetch_all=True, max_rows=200, session=session)
+                if last["results"]:
+                    break
     rows = dedup_rows(last["results"]) if last else []
     out = {"doc_number": doc, "_queries_tried": tried, "results": rows,
            "total": (last or {}).get("total"), "_status": (last or {}).get("_status", "没走成")}
@@ -529,6 +557,9 @@ def find_by_doc_number(doc_number: str, session: requests.Session | None = None)
         out["_caveat"] = ("这一档命中里含同稿多栏与地方转发同号文件；"
                           "站点行里的 subtitle 就是文号，逐条看 subtitle 与 agency 是否就是这份，"
                           "不要默认取第一条")
+        if not narrow_hit:
+            out["_caveat"] += ("；这一份是回落全文（q=）取到的——文号那一列窄档回 0 条，"
+                               "而站点只有部分行录了文号，窄档的 0 不代表站内没有这份文件")
     return out
 
 
@@ -1143,7 +1174,9 @@ def main(argv=None) -> int:
     ap.add_argument("--to", dest="date_to", default="", help="发布日期止 yyyy-mm-dd")
     ap.add_argument("--match", choices=list(MATCH_POSITIONS), default="content",
                     help="匹配域：content=全文（默认，提交 q）、title=只匹配标题、"
-                         "keyword=只匹配站点关键词字段、author=只匹配 author 段")
+                         "keyword=只匹配站点关键词字段、author=只匹配 author 段、"
+                         "doc_number=只匹配文号列（站点的 subtitle；按文号定位只用这一枚，"
+                         "q= 会把正文援引它的解读文章一起带回）")
     ap.add_argument("--channel", type=int, default=CHANNEL_WEB,
                     help="1=网站（默认）；2=触屏端只有 18 行 2018-2019 年的转载、正文取不到；"
                          "0=不提交这一枚、取两端并集；其余值不发请求")
