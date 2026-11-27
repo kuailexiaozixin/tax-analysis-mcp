@@ -571,6 +571,64 @@ def _parse_mp_cards(payload: dict) -> list[dict]:
     return items
 
 
+TIME_FILTER_DAYS = {"1d": 1, "1w": 7, "1m": 30, "1y": 365}
+
+
+def _item_day(item: dict):
+    """条目的发布日：优先 `item.jsonData.pub_time`（epoch 秒，精确），回落日期串前 10 位。"""
+    ts = item.get("timestamp")
+    if isinstance(ts, int) and not isinstance(ts, bool) and ts > 0:
+        return time.strftime("%Y-%m-%d", time.localtime(ts))
+    day = str(item.get("date") or "")[:10]
+    try:
+        time.strptime(day, "%Y-%m-%d")
+    except ValueError:
+        return ""
+    return day
+
+
+def _apply_time_filter(items: list[dict], time_filter: str, tier: str,
+                       site_ignored: bool = False) -> tuple[list[dict], str]:
+    """按发布日本地筛时间档，返回（留下的条目, 给读者看的那一句）。
+
+    为什么要有这一枚（2026-11-27 定性，yb76tf/yb78tf3 真网）：**垂直档不执行
+    `sp.timeFilter`**。同一关键词带 `timeFilter:"1m"` 与不带，返回的是同一批卡、
+    同一顺序（「增值税 即征即退」25 张逐枚相同、复跑两轮一致；「留抵退税 制造业」
+    28 张同样逐枚相同）。参数照发、站点照忽略，于是 `--time-filter` 在读者那边
+    等于没生效——报告 §5.6 的验收句是「结果满足筛选，或明确返回筛选未生效」，
+    旧实现两样都没做到：既没筛，也没说。
+
+    这里选择兑现语义而不是只加一句说明：站点这一档既然不筛，就由我们按发布日期筛。
+    日期读不出来的条目**不计入**（宁可少给，不拿一条不知道日期的冒充近一月），
+    但要把这个数告诉读者。一张都没滤掉时**不记账**——「本地筛了近 30 天：4 张里留
+    4 张」这种话只在真滤掉东西时才有信息量，否则是给读者的噪声。
+    """
+    days = TIME_FILTER_DAYS.get(time_filter)
+    if not days or not items:
+        return items, ""
+    cutoff = time.strftime("%Y-%m-%d", time.localtime(time.time() - days * 86400))
+    kept, undated = [], 0
+    for item in items:
+        day = _item_day(item)
+        if not day:
+            undated += 1
+            continue
+        if day >= cutoff:
+            kept.append(item)
+    if len(kept) == len(items):
+        return kept, ""
+    if site_ignored:
+        note = ("%s不执行站点时间筛（实测带与不带 `timeFilter` 回同一批卡），"
+                "已按发布日期本地筛近 %d 天：%d 张里留 %d 张"
+                % (tier, days, len(items), len(kept)))
+    else:
+        note = ("%s已按发布日期本地复核时间窗（近 %d 天）：%d 张里留 %d 张"
+                % (tier, days, len(items), len(kept)))
+    if undated:
+        note += "，另有 %d 张读不出发布日期未计入" % undated
+    return kept, note
+
+
 def _finalize(keyword: str, results: list[dict], size: int, read_body: bool,
               caveat: str = "") -> dict:
     """共用的收尾：先按直链有效性挑出能交付的那批、再截 size、逐篇读正文、拼返回
@@ -666,6 +724,9 @@ def search_wechat(keyword: str, size: int = 5, read_body: bool = False,
         sess.headers.update(HEADERS_YUANBAO)
         notes = []
         site_empty_note = ""
+        # 「有相关条目、只是都不在所选时间窗内」是零命中的另一种正当成因，与
+        # 「站内没这个词」不同义，所以各记各的，收尾时一起写进 _caveat。
+        window_notes = []
 
         # ---- 第一档：公众号垂直档 ----
         try:
@@ -680,8 +741,14 @@ def search_wechat(keyword: str, size: int = 5, read_body: bool = False,
         if payload is not None:
             parsed, bad_link = _parse_vertical_cards(payload)
             kept, _ = _relevant_only(parsed, keyword)
+            in_window = kept
             if kept:
-                dropped = len(parsed) - len(kept)
+                kept, tf_note = _apply_time_filter(kept, time_filter, "垂直档",
+                                                   site_ignored=True)
+                if tf_note:
+                    notes.append(tf_note)
+            if kept:
+                dropped = len(parsed) - len(in_window)
                 if dropped:
                     notes.append("垂直档 %d 张里 %d 张与检索词无关，已按 token 相关性滤掉"
                                  % (len(parsed), dropped))
@@ -689,14 +756,18 @@ def search_wechat(keyword: str, size: int = 5, read_body: bool = False,
                 if bad_link:
                     notes.append("另有 %d 张卡被微信直链白名单挡掉" % bad_link)
                 return _finalize(keyword, kept, size, read_body, "；".join(notes))
-            if bad_link:
+            if in_window:
+                # 相关性过了、时间窗把它清空了：站点这一档是有货的，只是不在窗内。
+                # 这一笔不能落进下面「整批推词兜底」那支，否则通道被读成「站内没这个词」。
+                window_notes.append("垂直档 %d 张相关条目都不在所选时间窗内" % len(in_window))
+            elif bad_link:
                 # 2026-11-27 修报告 §5.2：站点给了货，但链接全不在白名单里——这是通道
                 # 故障。旧写法把无链的卡继续交给相关性过滤，整批 0 命中就落进零命中
                 # 信封，「链接形不对」这件故障被伪装成「站内没这个词」，永远看不见。
                 return _empty(keyword, "元宝垂直档给出 %d 张卡，但其中 %d 张的链接不是 "
                                        "mp.weixin.qq.com 文章直链"
                                        % (len(parsed) + bad_link, bad_link))
-            if parsed:
+            elif parsed:
                 # 满批推词兜底＝站点自己的「没找到」表达方式（实测不存在的词照样回
                 # 26 张 q2q 卡）。记下这一笔，仍往下两档试——综合档偶尔有真结果。
                 site_empty_note = ("垂直档 %d 张卡没有一张含检索词的分词（整批是站点的"
@@ -718,6 +789,13 @@ def search_wechat(keyword: str, size: int = 5, read_body: bool = False,
         if payload2 is not None:
             parsed2 = _parse_mp_cards(payload2)
             kept2, _ = _relevant_only(parsed2, keyword)
+            in_window2 = kept2
+            if kept2:
+                # 综合档站点自己会筛（probe58tf 那组样本），但 yb77tf2 那轮两发都薄、
+                # 没能复现——不能当保证。再过一遍本地筛是幂等的：真滤掉才记账。
+                kept2, tf_note2 = _apply_time_filter(kept2, time_filter, "综合档")
+                if tf_note2:
+                    notes.append(tf_note2)
             if kept2:
                 dropped2 = len(parsed2) - len(kept2)
                 # 上一档为什么不算（整批推词兜底／0 张卡）已经在 notes 里记过一笔，
@@ -726,7 +804,11 @@ def search_wechat(keyword: str, size: int = 5, read_body: bool = False,
                 if dropped2:
                     notes.append("其中 %d 条与检索词无关已滤掉" % dropped2)
                 return _finalize(keyword, kept2, size, read_body, "；".join(notes))
-            notes.append("综合档 %d 张卡里没有一条带微信直链的相关结果" % len(parsed2))
+            if in_window2:
+                window_notes.append("综合档 %d 张相关条目都不在所选时间窗内"
+                                    % len(in_window2))
+            if parsed2:
+                notes.append("综合档 %d 张卡里没有一条带微信直链的相关结果" % len(parsed2))
         else:
             notes.append(why2)
 
@@ -736,14 +818,28 @@ def search_wechat(keyword: str, size: int = 5, read_body: bool = False,
         except TimeoutError:
             results3, note3, kind3 = [], _GATE_TIMEOUT_NOTE, ""
         if results3:
-            notes.append(note3)
-            return _finalize(keyword, results3, size, read_body, "；".join(notes))
+            in_window3 = len(results3)
+            results3, tf_note3 = _apply_time_filter(results3, time_filter, "GET 兜底")
+            if tf_note3:
+                notes.append(tf_note3)
+            if results3:
+                notes.append(note3)
+                return _finalize(keyword, results3, size, read_body, "；".join(notes))
+            window_notes.append("GET 兜底 %d 条相关条目都不在所选时间窗内" % in_window3)
         if kind3 == "site-empty":
             # 上一档的成因不能覆盖掉：报零命中时要把「为什么三档都空」一次说清。
             site_empty_note = (site_empty_note + "；" + note3) if site_empty_note else note3
         if note3:
             notes.append(note3)
 
+        if window_notes and not site_empty_note:
+            # 窗口把相关条目清空了，而没有任何一档给出「站内没这个词」的正面证据：
+            # 报零命中（站点有货、只是不在窗内），并把成因写进 _caveat。这既不是
+            # 通道故障，也不是站内没货——报告 §5.6 要的是「结果满足筛选或明确说明」。
+            return _zero_with_note(keyword, "；".join(window_notes))
+        if window_notes:
+            # 两种正当成因都有：窗内空 + 站内没词。窗是读者自己限定的，写在前面。
+            site_empty_note = "；".join(window_notes) + "；" + site_empty_note
         if site_empty_note:
             # 至少有一档给出了「站内确实没这个词」的正面证据（空结果页锚／整批推词
             # 兜底／有容器无卡），那就报零命中，不报通道坏了。

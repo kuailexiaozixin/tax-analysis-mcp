@@ -478,7 +478,7 @@ def test_runtime_snapshot_matches_manifest():
     assert sys.modules[engine.__package__].__version__ == version
     assert server.mcp.version == version
     manifest = json.loads((runtime / "MANIFEST.json").read_text(encoding="utf-8"))
-    assert manifest["engine_version"] == "3.62.49"
+    assert manifest["engine_version"] == "3.62.50"
     listed = manifest["files"]
     actual = {
         path.relative_to(runtime).as_posix()

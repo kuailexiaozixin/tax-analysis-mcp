@@ -1,6 +1,6 @@
 {
   "engine": "tax-analysis",
-  "engine_version": "3.62.49",
+  "engine_version": "3.62.50",
   "files": {
     "data/contract_intake_template.json": "771e60f68a16cabb4515ffc691207c76e8f206a93ee64e1e1a20f2d98f158edf",
     "data/control_activities.json": "a7fe3bb0fa649581c7661107143870c1250a6b381e6964ee70aa1a37370ff839",
@@ -36,6 +36,6 @@
     "scripts/tax_sogou.py": "ed074584bdcb766b2eb8b76145e6fa624759d4bd477c004b5275dcf40501996e",
     "scripts/tax_terms.py": "8d0c1627fbe64180d55d888807d41c672560a5ef2d2419d0ff2a21fa61aeaa88",
     "scripts/tax_web_search.py": "bfc9f81371dfc8ce9e8dabbf3726b3b662f8cfa2f0d3cd5012de8b9bb86f3cba",
-    "scripts/tax_wechat.py": "9bf5c814afd322475d564f056fe857285df567359f560446d6316eebf774345d"
+    "scripts/tax_wechat.py": "b05bb47c6f892b8fa7d05f6807353ef148412c097c9510c63a971db2efacbe81"
   }
 }
