@@ -6,3 +6,8 @@ __pycache__/
 build/
 dist/
 .env
+
+# 离线审计插件的读数落点（netblock_plugin.py 写在当前工作目录）。
+# 它记的每一条结论已经进了母技能 references/source_defects.md，产物本身零价值；
+# 3.62.29 那次 `git add -A` 误收过它，规则写死在这里是为了让「顺手 add」不存在。
+netblock-report.txt

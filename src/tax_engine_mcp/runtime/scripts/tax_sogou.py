@@ -205,6 +205,12 @@ def _fetch(query: str) -> tuple[str, str, str, bool]:
                 r = _get(sess, url)
             except _Unavailable as e:
                 return "", "", str(e), e.blocked
+            except TimeoutError as e:
+                # 串行闸等不到（TAX_SOGOU_LOCK_TIMEOUT 到点）＝另有进程正在打搜狗。
+                # 2026-11-27 修报告 §5.10：这枚异常此前直接穿透 `sogou_search`，
+                # 调用方拿到的是裸异常而不是「这一轮没发请求」的信封；也不重试——
+                # 闸被占着的时候重试只会把等待叠上去。
+                return "", "", str(e), False
             except requests.RequestException as e:
                 last = tax_http.short_reason(e)
                 if attempt < MAX_RETRIES - 1:
@@ -357,7 +363,18 @@ class _MobileResultsParser(HTMLParser):
                 self.card[field].append(text)
 
 
-def _island_rows(html: str, site: str) -> tuple[list, int]:
+def _island_title_hit(query: str, *fields: str) -> bool:
+    """这张岛与检索词有没有关系（按空白分词，命中任一分词即算）。
+
+    检索词为空时一律算命中——调用方没给词就不要拿这条尺去筛人。
+    """
+    if not query:
+        return True
+    hay = "\n".join(str(field or "") for field in fields).lower()
+    return any(token.lower() in hay for token in query.split() if token)
+
+
+def _island_rows(html: str, site: str, query: str = "") -> tuple[list, int]:
     """从 JSON 数据岛里读结果卡片，返回 (结果, 带直链的原始卡片数)。
 
     2026-11-26 真页（`tests/fixtures/msogou_dataisland_20261126.html`）里九块岛中
@@ -367,6 +384,16 @@ def _island_rows(html: str, site: str) -> tuple[list, int]:
     日期一律留空：岛上的 `showSiteAndDate.time` 语义说不清（本轮同一页里两枚卡片
     标的是抓取当天 2026-11-26，另外几枚标的是站点收录/更新时间），拿它当发布日印进
     答案就是把猜测写成事实。
+
+    2026-11-27 修报告 §5.5 加了两道闸：
+    - **归属**：只认带 `cardInfo`（dict）的岛。真页九块岛每块都有 28 键的 `cardInfo`，
+      结果岛的 `classId` 是 30010582；而诊断里那枚合成推荐载荷
+      `{"url":…,"title":…,"content":…}` 根本没有 `cardInfo`——旧判据只看 `url+title`，
+      这种载荷会直接当成一条结果交付出去（假命中），带 `site:` 时又被过滤掉（假零命中）。
+      这里不把 `classId` 写死成白名单：那枚值只在一份真页上量过，站点换个卡片模板号
+      就会把真结果筛成 0 条，那种 0 比现在的假命中更难被发现。
+    - **相关性**：`query` 传进来时，与检索词毫不相干的岛不计入 `raw`，因此也不会
+      被上层拿去当「站内没货」的证据。不传 query 的调用（含既有用例）行为不变。
     """
     rows = []
     seen = set()
@@ -379,11 +406,16 @@ def _island_rows(html: str, site: str) -> tuple[list, int]:
             continue
         if not isinstance(payload, dict):
             continue
+        if not isinstance(payload.get("cardInfo"), dict):
+            # 没有 cardInfo 的载荷不是渲染出来的结果卡（§5.5 的合成推荐位就是这形）。
+            continue
         url = (payload.get("url") or "").strip()
         title = _clean(payload.get("title") or "")
         if not url or not title:
             continue
         if not _domain_of(url) or _matches_site(url, "sogou.com"):
+            continue
+        if not _island_title_hit(query, title, payload.get("content")):
             continue
         raw += 1
         url = _normalize_url(url)
@@ -430,7 +462,8 @@ def _parse_mobile(html: str, site: str, size: int) -> tuple[list, int, bool]:
     return rows[:size], raw, parser.has_results
 
 
-def _parse(html: str, site: str = "", size: int = 10) -> tuple[list, int, bool]:
+def _parse(html: str, site: str = "", size: int = 10,
+           query: str = "") -> tuple[list, int, bool]:
     """解析结果块，返回 (结果, 带直链的原始块数, 是否出现结果区)。
 
     原始块数用来区分"站点确实 0 条"与"页面改版、结果块还在但取不到直链"：
@@ -445,7 +478,7 @@ def _parse(html: str, site: str = "", size: int = 10) -> tuple[list, int, bool]:
             # 先按 HTML 读到 0 枚直链，再回落到岛层。岛层也读不出才让上层报
             # 「页面结构可能改版」——「有结果区但一条直链都取不出」这个语义
             # 仍然留着，不能因为加了岛层就退化成静默 0 条。
-            island_rows, island_raw = _island_rows(html, site)
+            island_rows, island_raw = _island_rows(html, site, query)
             if island_raw:
                 return island_rows[:size], island_raw, has_mobile
             return rows, raw, has_mobile
@@ -573,7 +606,7 @@ def sogou_search(keyword: str, site: str = "", size: int = 10) -> dict:
         return _empty(keyword, site,
                       "触发搜狗反爬（antispider），0 条不代表没有匹配结果", True)
 
-    rows, raw, has_vrwrap = _parse(html, site=site, size=sys.maxsize)
+    rows, raw, has_vrwrap = _parse(html, site=site, size=sys.maxsize, query=keyword)
     if rows:
         out = _payload(keyword, site, rows, "")
         _remember(key, out)
@@ -591,13 +624,24 @@ def sogou_search(keyword: str, site: str = "", size: int = 10) -> dict:
         out = _empty(keyword, site)
         _remember(key, out)
         return out
+    # 2026-11-27 修报告 §5.5：岛上的卡带着 cardInfo 也不等于这一轮的答案——
+    # 整批与检索词毫不相干时那是推荐位。它既不能交付成结果，更推不出
+    # 「站内没有这个词」。这一支必须排在「改版」那支之前：推荐位同样表现为
+    # 「有结果区、零直链」，不先分出来就被读成页面改版（3.62.49 注入证伪时，
+    # 撤掉岛层相关性闸，全族用例没有一枚报红，就是因为这个落点写在了末支）。
+    if _island_rows(html, "", "")[1] and not _island_rows(html, "", keyword)[1]:
+        return _empty(keyword, site, "结果区里的卡片没有一张与检索词相关（像是推荐位）："
+                                     "不能据此判站内没有结果")
     if raw == 0 and has_vrwrap:
         return _empty(keyword, site,
                       "搜狗返回了结果区，但没有解析出可用直链：页面结构可能改版")
     if not has_vrwrap:
         return _empty(keyword, site,
                       "搜狗返回的页面既没有结果区也没有无结果提示：可能落在验证页")
-    # 有直链但都被 site: 过滤掉：这一轮确实没有目标站点的结果，不是取数失败
+    # 走到这里意味着 raw > 0：卡片与检索词相关（相关性计数在 `_island_rows` 里
+    # 就是发生在 raw 之前），只是没有一张落在 site: 指定的域名上。这一轮确实
+    # 没有目标站点的结果，不是取数失败——旧语义保留（判据上移那一支只管
+    # 「整批都是推荐位」那种 0 条，不能顺带把 site: 过滤也算成通道故障）。
     out = _empty(keyword, site)
     _remember(key, out)
     return out
